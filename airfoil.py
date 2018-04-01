@@ -1,5 +1,5 @@
-#!/usr/bin/env python
-import matplotlib.pyplot as plt
+#!/usr/bin/python3
+# -*- coding: utf-8 -*-
 from math import *
 import numpy as np
 import sys
@@ -8,32 +8,54 @@ import sys
 class Airfoil:
     ###############################################
     def __init__(self, filename = None):
+        self.r = 0
+        self.s = 100
+        self.t = [0, 0]
         if filename == None :
-            self.points = np.array(float)
+            self.raw_x = self.x = np.array([])
+            self.raw_y = self.y = np.array([])
         else:
-            data = list()
-            fp = open(filename)
-            line = ' '
-            while line != "":
-                line = fp.readline()
-                words = line.split()
-                try:
-                    if len(words) == 2:
-                        x = float(words[0])
-                        y = float(words[1])
-                        data.append([x,y])
-                except ValueError:
-                    pass
-            self.points = np.array(data, float)
+            self.load(filename)
+    ###############################################
+    def load(self, filename):
+        xl = list()
+        yl = list()
+        fp = open(filename)
+        line = ' '
+        while line != "":
+            line = fp.readline()
+            words = line.split()
+            try:
+                if len(words) == 2:
+                    xl.append(float(words[0]))
+                    yl.append(float(words[1]))
+            except ValueError:
+                pass
+        self.raw_x = self.x = np.array(xl)
+        self.raw_y = self.y = np.array(yl)
+        self.__apply_transform()
     ###############################################
     def __str__(self):
-        return str(self.points)
+        return str((self.x, self.y))
     ###############################################
-    def __mul__(self, factor):
-        self.points *= factor
-        return self
+    def rotate(self, rotation):
+        self.r = rotation
+        self.__apply_transform()
     ###############################################
-    __rmul__ = __mul__
+    def scale(self, scale):
+        self.s = scale
+        self.__apply_transform()
+    ###############################################
+    def translate(self, translation):
+        self.t = translation
+        self.__apply_transform()
+    ###############################################
+    def __apply_transform(self):
+        rrad = self.r / 180 * pi
+        mat = np.array([[-self.s*cos(rrad), self.s*sin(rrad), self.t[0]+self.s],
+                        [self.s*sin(rrad), self.s*cos(rrad), self.t[1]       ],
+                        [0,                 0,                1               ]])
+        (self.x, self.y, _) = np.dot(mat, [self.raw_x, self.raw_y, np.ones((len(self.raw_x)))])
     ###############################################
     def dilate(self, radius):
         data2 = list()
@@ -62,26 +84,6 @@ class Airfoil:
         angle_a = atan2(ya-y, xa-x)
         data2.append([x + radius*cos(angle_b-pi/2),y + radius*sin(angle_b-pi/2)])
         self.points = np.array(data2, float)
-    ###############################################
-    def plot(self):
-        xl = list()
-        yl = list()
-        for [x,y] in self.points:
-            xl.append(x)
-            yl.append(y)
-        plt.plot(xl, yl)
-    ###############################################
-    def normalize(self):
-        xmin = xmax = self.points[0][0]
-        for [x,y] in self.points:
-            if x < xmin:
-                xmin = x
-            if x > xmax:
-                xmax = x
-
-        for e in self.points:
-            e[0] -= xmin
-            e /= (xmax - xmin)
     ###############################################
     def length(self):
         xmin = xmax = self.points[0][0]
