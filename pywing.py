@@ -24,6 +24,14 @@ class MyWidget(QtGui.QWidget):
         load_left_btn.clicked.connect(self.on_load_left)
         load_right_btn.clicked.connect(self.on_load_right)
 
+        self.left_rot_slider = QtGui.QSlider()
+        self.left_rot_slider.setMinimum(-90)
+        self.left_rot_slider.setMaximum(90)
+        self.left_rot_slider.setValue(0)
+        self.left_rot_slider.setTickPosition(QtGui.QSlider.TicksBelow)
+        self.left_rot_slider.setTickInterval(10)
+        self.left_rot_slider.valueChanged.connect(self.on_left_rot)
+
         plot = pg.PlotWidget()
         plot.addItem(self.airfoil_item_left)
         plot.addItem(self.airfoil_item_right)
@@ -43,6 +51,7 @@ class MyWidget(QtGui.QWidget):
         layout = QtGui.QGridLayout()
         layout.addWidget(load_left_btn, 0, 0)
         layout.addWidget(load_right_btn, 1, 0)
+        layout.addWidget(self.left_rot_slider, 2, 0)
         layout.addWidget(plot, 0, 1, 3, 1)
         self.setLayout(layout)
 
@@ -57,6 +66,10 @@ class MyWidget(QtGui.QWidget):
 
     def on_load_right(self):
         self.open_airfoil(self.airfoil_item_right, self.airfoil_right)
+
+    def on_left_rot(self):
+        self.airfoil_left.rotate(self.left_rot_slider.value())
+        self.airfoil_item_left.setData(self.airfoil_left.x, self.airfoil_left.y)
 
 if __name__ == '__main__':
     pg.setConfigOption('background', 'w')
