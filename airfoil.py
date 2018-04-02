@@ -13,14 +13,13 @@ class Airfoil:
         self.t = [0, 0]
         self.d = 0
         if filename is None :
-            self.raw_x = self.x = np.array([])
-            self.raw_y = self.y = np.array([])
+            self.file_data = self.mod_data = np.array([[],[]])
         else:
             self.load(filename)
     ###############################################
     def load(self, filename):
-        xl = list()
-        yl = list()
+        x = list()
+        y = list()
         fp = open(filename)
         line = ' '
         while line != "":
@@ -29,16 +28,15 @@ class Airfoil:
             try:
                 if len(words) == 2:
                     a, b = (float(words[0]), float(words[1]))
-                    xl.append(a)
-                    yl.append(b)
+                    x.append(a)
+                    y.append(b)
             except ValueError:
                 pass
-        self.raw_x = self.x = np.array(xl)
-        self.raw_y = self.y = np.array(yl)
+        self.file_data = self.mod_data = np.array([x, y])
         self.__apply_transform()
     ###############################################
     def __str__(self):
-        return str((self.x, self.y))
+        return str(self.mod_data)
     ###############################################
     def rotate(self, rotation):
         self.r = rotation
@@ -48,8 +46,12 @@ class Airfoil:
         self.s = scale
         self.__apply_transform()
     ###############################################
-    def translate(self, translation):
-        self.t = translation
+    def translate_x(self, translation_x):
+        self.t[0] = translation_x
+        self.__apply_transform()
+    ###############################################
+    def translate_y(self, translation_y):
+        self.t[1] = translation_y
         self.__apply_transform()
     ###############################################
     def dilate(self, radius):
@@ -57,29 +59,30 @@ class Airfoil:
         self.__apply_transform()
     ###############################################
     def __dilate(self):
-        self.x = np.insert(self.x, 0, 2*self.x[0]-self.x[1])
-        self.y = np.insert(self.y, 0, 2*self.y[0]-self.y[1])
+        x = self.mod_data[0]
+        y = self.mod_data[1]
 
-        self.x = np.append(self.x, 2*self.x[-1:]-self.x[-2:-1])
-        self.y = np.append(self.y, 2*self.y[-1:]-self.y[-2:-1])
+        x = np.insert(x, 0, 2*x[0]-x[1])
+        y = np.insert(y, 0, 2*y[0]-y[1])
 
-        angle_a = np.arctan2(self.y[:-1]-self.y[1:], self.x[:-1]-self.x[1:])[:-1] # 1 to end-1
-        angle_b = np.arctan2(self.y[1:]-self.y[:-1], self.x[1:]-self.x[:-1])[1:] # 1 to end-1
+        x = np.append(x, 2*x[-1:]-x[-2:-1])
+        y = np.append(y, 2*y[-1:]-y[-2:-1])
+
+        angle_a = np.arctan2(y[:-1]-y[1:], x[:-1]-x[1:])[:-1] # 1 to end-1
+        angle_b = np.arctan2(y[1:]-y[:-1], x[1:]-x[:-1])[1:] # 1 to end-1
         diff = (angle_b - angle_a + 2*pi)%(2*pi)
-        x = self.x[1:-1] - self.d * np.cos(angle_a + diff/2)
-        y = self.y[1:-1] - self.d * np.sin(angle_a + diff/2)
-
-        self.x = x
-        self.y = y
+        self.mod_data[0] = x[1:-1] - self.d * np.cos(angle_a + diff/2)
+        self.mod_data[1] = y[1:-1] - self.d * np.sin(angle_a + diff/2)
     ###############################################
     def __apply_transform(self):
-        if(self.x.size == 0):
+        if(self.file_data.size == 0):
             return
         rrad = -self.r / 180 * pi
         mat = np.array([[-self.s*cos(rrad), self.s*sin(rrad), self.t[0]+self.s],
                         [self.s*sin(rrad), self.s*cos(rrad), self.t[1]       ],
                         [0,                 0,                1               ]])
-        (self.x, self.y, _) = np.dot(mat, [self.raw_x, self.raw_y, np.ones((len(self.raw_x)))])
+        z_padded = np.pad(self.file_data, ((0, 1), (0, 0)), 'constant', constant_values=1)
+        self.mod_data = np.dot(mat, z_padded)[:-1]
         self.__dilate()
     ###############################################
     def length(self):

@@ -14,7 +14,7 @@ airfoil_right = Airfoil()
 class AirfoilItemManager:
     def __init__(self, airfoil, color):
         self.airfoil = airfoil
-        self.curve_item = pg.PlotCurveItem([], [], pen=pg.mkPen(color=color, width=2))
+        self.curve = pg.PlotCurveItem([], [], pen=pg.mkPen(color=color, width=2))
 
         self.load_btn = QtGui.QPushButton("Load")
         self.load_btn.clicked.connect(self.on_load)
@@ -61,32 +61,35 @@ class AirfoilItemManager:
         color_str = "(" + str(color[0]) + "," + str(color[1]) + "," + str(color[2]) + ")"
         self.name.setStyleSheet("color: rgb" + color_str)
 
+    def __refresh_curve(self):
+        self.curve.setData(self.airfoil.mod_data[0], self.airfoil.mod_data[1])
+
     def on_load(self):
         filename, _ = QtGui.QFileDialog.getOpenFileName(self.load_btn.parent(), "Open File", airfoil_data_folder, "All Files (*)")
         if filename:
             self.airfoil.load(filename)
-            self.curve_item.setData(self.airfoil.x, self.airfoil.y)
+            self.__refresh_curve()
             self.name.setText(os.path.splitext(os.path.basename(filename))[0])
 
     def on_rot(self):
         self.airfoil.rotate(self.rot_spbox.value())
-        self.curve_item.setData(self.airfoil.x, self.airfoil.y)
+        self.__refresh_curve()
 
     def on_scale(self):
         self.airfoil.scale(self.scale_spbox.value())
-        self.curve_item.setData(self.airfoil.x, self.airfoil.y)
+        self.__refresh_curve()
 
     def on_tx(self):
-        self.airfoil.translate((self.tx_spbox.value(), self.airfoil.t[1]))
-        self.curve_item.setData(self.airfoil.x, self.airfoil.y)
+        self.airfoil.translate_x(self.tx_spbox.value())
+        self.__refresh_curve()
 
     def on_ty(self):
-        self.airfoil.translate((self.airfoil.t[0], self.ty_spbox.value()))
-        self.curve_item.setData(self.airfoil.x, self.airfoil.y)
+        self.airfoil.translate_y(self.ty_spbox.value())
+        self.__refresh_curve()
 
     def on_dilate(self):
         self.airfoil.dilate(self.dilate_spbox.value())
-        self.curve_item.setData(self.airfoil.x, self.airfoil.y)
+        self.__refresh_curve()
 
 class MainWidget(QtGui.QWidget):
     def __init__(self, filename = None):
@@ -96,8 +99,8 @@ class MainWidget(QtGui.QWidget):
         self.airfoil_right_view = AirfoilItemManager(airfoil_right,(233, 79, 55))
 
         plot = pg.PlotWidget()
-        plot.addItem(self.airfoil_left_view.curve_item)
-        plot.addItem(self.airfoil_right_view.curve_item)
+        plot.addItem(self.airfoil_left_view.curve)
+        plot.addItem(self.airfoil_right_view.curve)
 
         grid_alpha = 50
         grid_levels = [(10, 0), (5, 0), (1, 0)]
