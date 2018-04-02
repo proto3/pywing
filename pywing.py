@@ -47,6 +47,14 @@ class AirfoilItemManager:
         self.ty_spbox.setSuffix("mm")
         self.ty_spbox.valueChanged.connect(self.on_ty)
 
+        self.dilate_spbox = QtGui.QDoubleSpinBox()
+        self.dilate_spbox.setRange(0, 100)
+        self.dilate_spbox.setValue(airfoil.d)
+        self.dilate_spbox.setSingleStep(0.1)
+        self.dilate_spbox.setPrefix("D : ")
+        self.dilate_spbox.setSuffix("mm")
+        self.dilate_spbox.valueChanged.connect(self.on_dilate)
+
         self.name = QtGui.QLabel(text="No airfoil loaded")
         self.name.setAlignment(Qt.Qt.AlignCenter)
         self.name.setMaximumSize(1000, 20)
@@ -74,6 +82,10 @@ class AirfoilItemManager:
 
     def on_ty(self):
         self.airfoil.translate((self.airfoil.t[0], self.ty_spbox.value()))
+        self.curve_item.setData(self.airfoil.x, self.airfoil.y)
+
+    def on_dilate(self):
+        self.airfoil.dilate(self.dilate_spbox.value())
         self.curve_item.setData(self.airfoil.x, self.airfoil.y)
 
 class MainWidget(QtGui.QWidget):
@@ -106,13 +118,15 @@ class MainWidget(QtGui.QWidget):
         layout.addWidget(self.airfoil_left_view.scale_spbox, 3, 0)
         layout.addWidget(self.airfoil_left_view.tx_spbox, 4, 0)
         layout.addWidget(self.airfoil_left_view.ty_spbox, 5, 0)
-        layout.addWidget(plot, 0, 1, 7, 1)
+        layout.addWidget(self.airfoil_left_view.dilate_spbox, 6, 0)
+        layout.addWidget(plot, 0, 1, 8, 1)
         layout.addWidget(self.airfoil_right_view.name, 0, 2)
         layout.addWidget(self.airfoil_right_view.load_btn, 1, 2)
         layout.addWidget(self.airfoil_right_view.rot_spbox, 2, 2)
         layout.addWidget(self.airfoil_right_view.scale_spbox, 3, 2)
         layout.addWidget(self.airfoil_right_view.tx_spbox, 4, 2)
         layout.addWidget(self.airfoil_right_view.ty_spbox, 5, 2)
+        layout.addWidget(self.airfoil_right_view.dilate_spbox, 6, 2)
         self.setLayout(layout)
 
 if __name__ == '__main__':

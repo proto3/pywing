@@ -11,6 +11,7 @@ class Airfoil:
         self.r = 0
         self.s = 100
         self.t = [0, 0]
+        self.d = 0
         if filename == None :
             self.raw_x = self.x = np.array([])
             self.raw_y = self.y = np.array([])
@@ -50,40 +51,33 @@ class Airfoil:
         self.t = translation
         self.__apply_transform()
     ###############################################
+    def dilate(self, radius):
+        self.d = radius
+        self.__apply_transform()
+    ###############################################
+    def __dilate(self):
+        self.x = np.insert(self.x, 0, 2*self.x[0]-self.x[1])
+        self.y = np.insert(self.y, 0, 2*self.y[0]-self.y[1])
+
+        self.x = np.append(self.x, 2*self.x[-1:]-self.x[-2:-1])
+        self.y = np.append(self.y, 2*self.y[-1:]-self.y[-2:-1])
+
+        angle_a = np.arctan2(self.y[:-1]-self.y[1:], self.x[:-1]-self.x[1:])[:-1] # 1 to end-1
+        angle_b = np.arctan2(self.y[1:]-self.y[:-1], self.x[1:]-self.x[:-1])[1:] # 1 to end-1
+        diff = (angle_b - angle_a + 2*pi)%(2*pi)
+        x = self.x[1:-1] - self.d * np.cos(angle_a + diff/2)
+        y = self.y[1:-1] - self.d * np.sin(angle_a + diff/2)
+
+        self.x = x
+        self.y = y
+    ###############################################
     def __apply_transform(self):
         rrad = -self.r / 180 * pi
         mat = np.array([[-self.s*cos(rrad), self.s*sin(rrad), self.t[0]+self.s],
                         [self.s*sin(rrad), self.s*cos(rrad), self.t[1]       ],
                         [0,                 0,                1               ]])
         (self.x, self.y, _) = np.dot(mat, [self.raw_x, self.raw_y, np.ones((len(self.raw_x)))])
-    ###############################################
-    def dilate(self, radius):
-        data2 = list()
-        #first contour point
-        [x,y]   = self.points[0]
-        [xb,yb] = self.points[1]
-        angle_b = atan2(yb-y, xb-x)
-        data2.append([x + radius*cos(angle_b-pi/2),y + radius*sin(angle_b-pi/2)])
-
-        #contour
-        for i in range(1, len(self.points)-1):
-            [xa,ya] = self.points[i-1]
-            [x,y]   = self.points[i]
-            [xb,yb] = self.points[i+1]
-            angle_a = atan2(ya-y, xa-x)
-            angle_b = atan2(yb-y, xb-x)
-            if angle_a < angle_b :
-                diff = angle_b - angle_a
-            else:
-                diff = (2*pi) - angle_a + angle_b
-            data2.append([x + (radius*cos(angle_a+diff/2)),y + (radius*sin(angle_a+diff/2))])
-
-        #last contour point
-        [xa,ya] = self.points[len(self.points)-2]
-        [x,y]   = self.points[len(self.points)-1]
-        angle_a = atan2(ya-y, xa-x)
-        data2.append([x + radius*cos(angle_b-pi/2),y + radius*sin(angle_b-pi/2)])
-        self.points = np.array(data2, float)
+        self.__dilate()
     ###############################################
     def length(self):
         xmin = xmax = self.points[0][0]
