@@ -28,8 +28,9 @@ class Airfoil:
             words = line.split()
             try:
                 if len(words) == 2:
-                    xl.append(float(words[0]))
-                    yl.append(float(words[1]))
+                    a, b = (float(words[0]), float(words[1]))
+                    xl.append(a)
+                    yl.append(b)
             except ValueError:
                 pass
         self.raw_x = self.x = np.array(xl)
