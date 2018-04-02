@@ -12,7 +12,7 @@ class Airfoil:
         self.s = 100
         self.t = [0, 0]
         self.d = 0
-        if filename == None :
+        if filename is None :
             self.raw_x = self.x = np.array([])
             self.raw_y = self.y = np.array([])
         else:
@@ -72,6 +72,8 @@ class Airfoil:
         self.y = y
     ###############################################
     def __apply_transform(self):
+        if(self.x.size == 0):
+            return
         rrad = -self.r / 180 * pi
         mat = np.array([[-self.s*cos(rrad), self.s*sin(rrad), self.t[0]+self.s],
                         [self.s*sin(rrad), self.s*cos(rrad), self.t[1]       ],
