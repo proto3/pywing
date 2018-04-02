@@ -51,7 +51,7 @@ class Airfoil:
         self.__apply_transform()
     ###############################################
     def __apply_transform(self):
-        rrad = self.r / 180 * pi
+        rrad = -self.r / 180 * pi
         mat = np.array([[-self.s*cos(rrad), self.s*sin(rrad), self.t[0]+self.s],
                         [self.s*sin(rrad), self.s*cos(rrad), self.t[1]       ],
                         [0,                 0,                1               ]])

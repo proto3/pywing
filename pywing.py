@@ -2,46 +2,86 @@
 # -*- coding: utf-8 -*-
 from PyQt5 import QtCore, QtGui, Qt
 import pyqtgraph as pg
-import sys
+import sys, os
 
 from airfoil import Airfoil
 
 airfoil_data_folder = QtCore.QDir.homePath() + "/.airfoils"
+
 airfoil_left = Airfoil()
 airfoil_right = Airfoil()
 
-class AirfoilManager:
-    def __init__(self, airfoil, color, name):
+class AirfoilItemManager:
+    def __init__(self, airfoil, color):
         self.airfoil = airfoil
         self.curve_item = pg.PlotCurveItem([], [], pen=pg.mkPen(color=color, width=2))
 
-        self.load_btn = QtGui.QPushButton("Load " + name)
+        self.load_btn = QtGui.QPushButton("Load")
         self.load_btn.clicked.connect(self.on_load)
 
-        self.rot_slider = QtGui.QSlider()
-        self.rot_slider.setMinimum(-90)
-        self.rot_slider.setMaximum(90)
-        self.rot_slider.setValue(0)
-        self.rot_slider.setTickPosition(QtGui.QSlider.TicksBelow)
-        self.rot_slider.setTickInterval(10)
-        self.rot_slider.valueChanged.connect(self.on_rot)
+        self.rot_spbox = QtGui.QDoubleSpinBox()
+        self.rot_spbox.setRange(-90, 90)
+        self.rot_spbox.setValue(airfoil.r)
+        self.rot_spbox.setPrefix("R : ")
+        self.rot_spbox.setSuffix("°")
+        self.rot_spbox.valueChanged.connect(self.on_rot)
+
+        self.scale_spbox = QtGui.QDoubleSpinBox()
+        self.scale_spbox.setRange(0, 10000)
+        self.scale_spbox.setValue(airfoil.s)
+        self.scale_spbox.setPrefix("S : ")
+        self.scale_spbox.setSuffix("mm")
+        self.scale_spbox.valueChanged.connect(self.on_scale)
+
+        self.tx_spbox = QtGui.QDoubleSpinBox()
+        self.tx_spbox.setRange(-10000, 10000)
+        self.tx_spbox.setValue(airfoil.t[0])
+        self.tx_spbox.setPrefix("TX : ")
+        self.tx_spbox.setSuffix("mm")
+        self.tx_spbox.valueChanged.connect(self.on_tx)
+
+        self.ty_spbox = QtGui.QDoubleSpinBox()
+        self.ty_spbox.setRange(-10000, 10000)
+        self.ty_spbox.setValue(airfoil.t[1])
+        self.ty_spbox.setPrefix("TY : ")
+        self.ty_spbox.setSuffix("mm")
+        self.ty_spbox.valueChanged.connect(self.on_ty)
+
+        self.name = QtGui.QLabel(text="No airfoil loaded")
+        self.name.setAlignment(Qt.Qt.AlignCenter)
+        self.name.setMaximumSize(1000, 20)
+        color_str = "(" + str(color[0]) + "," + str(color[1]) + "," + str(color[2]) + ")"
+        self.name.setStyleSheet("color: rgb" + color_str)
 
     def on_load(self):
         filename, _ = QtGui.QFileDialog.getOpenFileName(self.load_btn.parent(), "Open File", airfoil_data_folder, "All Files (*)")
         if filename:
             self.airfoil.load(filename)
             self.curve_item.setData(self.airfoil.x, self.airfoil.y)
+            self.name.setText(os.path.splitext(os.path.basename(filename))[0])
 
     def on_rot(self):
-        self.airfoil.rotate(self.rot_slider.value())
+        self.airfoil.rotate(self.rot_spbox.value())
+        self.curve_item.setData(self.airfoil.x, self.airfoil.y)
+
+    def on_scale(self):
+        self.airfoil.scale(self.scale_spbox.value())
+        self.curve_item.setData(self.airfoil.x, self.airfoil.y)
+
+    def on_tx(self):
+        self.airfoil.translate((self.tx_spbox.value(), self.airfoil.t[1]))
+        self.curve_item.setData(self.airfoil.x, self.airfoil.y)
+
+    def on_ty(self):
+        self.airfoil.translate((self.airfoil.t[0], self.ty_spbox.value()))
         self.curve_item.setData(self.airfoil.x, self.airfoil.y)
 
 class MainWidget(QtGui.QWidget):
     def __init__(self, filename = None):
         super().__init__()
 
-        self.airfoil_left_view = AirfoilManager(airfoil_left,(46, 134, 171), "left")
-        self.airfoil_right_view = AirfoilManager(airfoil_right,(233, 79, 55), "right")
+        self.airfoil_left_view = AirfoilItemManager(airfoil_left,(46, 134, 171))
+        self.airfoil_right_view = AirfoilItemManager(airfoil_right,(233, 79, 55))
 
         plot = pg.PlotWidget()
         plot.addItem(self.airfoil_left_view.curve_item)
@@ -60,11 +100,19 @@ class MainWidget(QtGui.QWidget):
         plot.setAspectLocked()
 
         layout = QtGui.QGridLayout()
-        layout.addWidget(self.airfoil_left_view.load_btn, 0, 0)
-        layout.addWidget(self.airfoil_left_view.rot_slider, 1, 0)
-        layout.addWidget(plot, 0, 1, 3, 1)
-        layout.addWidget(self.airfoil_right_view.load_btn, 0, 2)
-        layout.addWidget(self.airfoil_right_view.rot_slider, 1, 2)
+        layout.addWidget(self.airfoil_left_view.name, 0, 0)
+        layout.addWidget(self.airfoil_left_view.load_btn, 1, 0)
+        layout.addWidget(self.airfoil_left_view.rot_spbox, 2, 0)
+        layout.addWidget(self.airfoil_left_view.scale_spbox, 3, 0)
+        layout.addWidget(self.airfoil_left_view.tx_spbox, 4, 0)
+        layout.addWidget(self.airfoil_left_view.ty_spbox, 5, 0)
+        layout.addWidget(plot, 0, 1, 7, 1)
+        layout.addWidget(self.airfoil_right_view.name, 0, 2)
+        layout.addWidget(self.airfoil_right_view.load_btn, 1, 2)
+        layout.addWidget(self.airfoil_right_view.rot_spbox, 2, 2)
+        layout.addWidget(self.airfoil_right_view.scale_spbox, 3, 2)
+        layout.addWidget(self.airfoil_right_view.tx_spbox, 4, 2)
+        layout.addWidget(self.airfoil_right_view.ty_spbox, 5, 2)
         self.setLayout(layout)
 
 if __name__ == '__main__':
