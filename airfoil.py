@@ -32,7 +32,20 @@ class Airfoil:
                     y.append(b)
             except ValueError:
                 pass
-        self.file_data = self.mod_data = np.array([x, y])
+        self.file_data = np.array([x, y])
+
+        # normalize x between 0 and 1
+        min = self.file_data[0].min()
+        max = self.file_data[0].max()
+        self.file_data[0] -= min
+        if(max == min):
+            return
+        self.file_data /= (max-min)
+
+        if(not self.compute_leading_edge()):
+            self.file_data = self.mod_data = np.array([[],[]])
+            return
+
         self.__apply_transform()
     ###############################################
     def __str__(self):
@@ -85,46 +98,39 @@ class Airfoil:
         self.mod_data = np.dot(mat, z_padded)[:-1]
         self.__dilate()
     ###############################################
-    def length(self):
-        xmin = xmax = self.points[0][0]
-        for [x,y] in self.points:
-            if x < xmin:
-                xmin = x
-            if x > xmax:
-                xmax = x
-        return xmax - xmin
-    ###############################################
-    def leading_edge_idx(self):
-        xmin_idx = 0
+    def compute_leading_edge(self):
+        edge_candidates = np.where(self.file_data[0] == 0)[0]
+        self.l_edge_idx = None
+        if(len(edge_candidates) == 0):
+            print("Error : No candidate for leading edge, normalization could have failed.")
+        elif(len(edge_candidates) == 1):
+            self.l_edge_idx = edge_candidates[0]
+        elif(len(edge_candidates) == 2):
+            if(edge_candidates[0] + 1 != edge_candidates[1]):
+                print("Error : There exist two leading edge that are not contiguous.")
+            else:
+                ys = np.take(self.file_data[1], edge_candidates)
+                middle_y = (ys[0] + ys[1]) / 2
+                self.file_data = np.insert(self.file_data, edge_candidates[1], [0, middle_y], axis=1)
+                self.l_edge_idx = edge_candidates[1]
+        else:
+            print("Error : More than two leading edge candidates.")
 
-        for i, [x,y] in enumerate(self.points):
-            if x < self.points[xmin_idx][0] :
-                xmin_idx = i
-
-        xmin_count = 0
-        for [x,y] in self.points:
-            if x == self.points[xmin_idx][0] :
-                xmin_count += 1
-
-        if xmin_count > 1 :
-            print("Cannot determine leading edge, multiple canditates.")
-            sys.exit(0)
-
-        return xmin_idx
+        return self.l_edge_idx is not None
     ###############################################
     def get_point(self, val):
         if val <= 0.0 :
             return self.points[0]
 
         if val == 0.5 :
-            return self.points[self.leading_edge_idx()]
+            return self.points[self.compute_leading_edge()]
 
         if val >= 1.0 :
             return self.points[len(self.points)-1]
 
         if val < 0.5 :
             x = 2 * (0.5 - val) * self.length()
-            x += self.points[self.leading_edge_idx()][0]
+            x += self.points[self.compute_leading_edge()][0]
             i = 0
             while self.points[i][0] > x:
                 i += 1
@@ -137,8 +143,8 @@ class Airfoil:
             return (next_p * prev_dist + prev_p * next_dist) / (prev_dist + next_dist)
         else:
             x = 2 * (val - 0.5) * self.length()
-            x += self.points[self.leading_edge_idx()][0]
-            i = self.leading_edge_idx()
+            x += self.points[self.compute_leading_edge()][0]
+            i = self.compute_leading_edge()
             while self.points[i][0] < x:
                 i += 1
 
@@ -150,7 +156,7 @@ class Airfoil:
             return (next_p * prev_dist + prev_p * next_dist) / (prev_dist + next_dist)
     ###############################################
     def get_normalized_pos(self, idx):
-        lead = self.leading_edge_idx()
+        lead = self.compute_leading_edge()
         length = self.length()
         if idx <= 0 :
             return 0.0
