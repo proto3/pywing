@@ -48,7 +48,7 @@ class AirfoilItemManager:
         self.rot_spbox.valueChanged.connect(self.on_rot)
 
         self.scale_spbox = QtGui.QDoubleSpinBox()
-        self.scale_spbox.setRange(0, 10000)
+        self.scale_spbox.setRange(1, 10000)
         self.scale_spbox.setValue(airfoil.s)
         self.scale_spbox.setPrefix("S : ")
         self.scale_spbox.setSuffix("mm")

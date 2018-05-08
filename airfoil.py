@@ -13,7 +13,7 @@ class Airfoil:
         self.t = [0, 0]
         self.d = 0
         if filename is None :
-            self.orig_data = self.trans_data = np.array([[],[]])
+            self.orig_data = self.trans_data = self.spe_data = np.array([[],[]])
             self.loaded = False
         else:
             self.loaded = True
