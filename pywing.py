@@ -114,8 +114,8 @@ class AirfoilItemManager:
         self.airfoil.dilate(self.dilate_spbox.value())
         self.__refresh_curve()
 
-class MainWidget(QtGui.QWidget):
-    def __init__(self, filename = None):
+class AirfoilWidget(QtGui.QWidget):
+    def __init__(self):
         super().__init__()
 
         self.airfoil_left_view = AirfoilItemManager(airfoil_left,(46, 134, 171))
@@ -128,7 +128,6 @@ class MainWidget(QtGui.QWidget):
         plot.addItem(self.airfoil_left_view.dot_curve)
         plot.addItem(self.airfoil_right_view.curve)
         plot.addItem(self.airfoil_right_view.dot_curve)
-
 
         grid_alpha = 50
         grid_levels = [(10, 0), (5, 0), (1, 0)]
@@ -160,12 +159,53 @@ class MainWidget(QtGui.QWidget):
         layout.addWidget(self.airfoil_right_view.dilate_spbox, 6, 2)
         self.setLayout(layout)
 
+class ControlWidget(QtGui.QWidget):
+    def __init__(self):
+        super().__init__()
+        layout = QtGui.QGridLayout()
+        play_btn = QtGui.QPushButton("play")
+        stop_btn = QtGui.QPushButton("stop")
+        home_btn = QtGui.QPushButton("home")
+
+        feed_spbox = QtGui.QDoubleSpinBox()
+        feed_spbox.setRange(1, 1000)
+        feed_spbox.setValue(200)
+        feed_spbox.setPrefix("Feedrate : ")
+        feed_spbox.setSuffix("mm/s")
+
+        lead_spbox = QtGui.QDoubleSpinBox()
+        lead_spbox.setRange(0, 1000)
+        lead_spbox.setValue(10)
+        lead_spbox.setPrefix("Lead in/out : ")
+        lead_spbox.setSuffix("mm")
+
+        layout.addWidget(feed_spbox, 0, 0)
+        layout.addWidget(lead_spbox, 1, 0)
+        layout.addWidget(home_btn, 2, 0)
+        layout.addWidget(play_btn, 3, 0)
+        layout.addWidget(stop_btn, 4, 0)
+        layout.addWidget(QtGui.QWidget(), 0, 1)
+        layout.setColumnStretch(0, 1)
+        layout.setColumnStretch(1, 10)
+        self.setLayout(layout)
+
+class MainWidget(QtGui.QSplitter):
+    def __init__(self, w1, w2):
+        super().__init__(QtCore.Qt.Vertical)
+        self.addWidget(w1)
+        self.addWidget(w2)
+
 if __name__ == '__main__':
     pg.setConfigOption('background', 'w')
     pg.setConfigOption('foreground', 'k')
     pg.setConfigOption('antialias', True)
 
     app = QtGui.QApplication([])
-    main_widget = MainWidget()
+
+    airfoil_widget = AirfoilWidget()
+    control_widget = ControlWidget()
+
+    main_widget = MainWidget(airfoil_widget, control_widget)
     main_widget.show()
+
     sys.exit(app.exec_())
