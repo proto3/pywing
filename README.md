@@ -1,5 +1,9 @@
 # Pywing
 
+***Note : Pywing is still in development, serial communication is not ready yet but you already can play with the airfoil editor.***
+
+![alt text](images/pywing.png)
+
 Pywing is a all-in-one software for hot wire foam CNC cutting.
 
 ## How to use it ?
@@ -21,7 +25,7 @@ source env/bin/activate #
 Install pywing dependencies and run :
 ```shell
 # install pywing dependencies
-pip install pyqt5 pyqtgraph
+pip install pyqt5 pyqtgraph pyserial
 
 #run pywing
 python pywing.py
