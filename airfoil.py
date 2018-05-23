@@ -19,6 +19,7 @@ class Airfoil(QtCore.QObject):
         self.s = 100
         self.t = [0, 0]
         self.d = 0
+        self.lead_in_out = 10
         self.orig_data = self.trans_data = np.array([[],[]])
         if filename is not None :
             self.load(filename)
@@ -82,6 +83,10 @@ class Airfoil(QtCore.QObject):
         self.d = radius
         self.__apply_transform()
     ###############################################
+    def set_lead(self, lead):
+        self.lead_in_out = lead
+        self.__apply_transform()
+    ###############################################
     def __apply_dilate(self, radius):
         x = self.orig_data[0]
         y = self.orig_data[1]
@@ -115,6 +120,17 @@ class Airfoil(QtCore.QObject):
 
         z_padded = np.pad(self.dilate_data, ((0, 1), (0, 0)), 'constant', constant_values=1)
         self.trans_data = np.dot(self.tr_mat, z_padded)[:-1]
+
+        p1 = (self.trans_data[0][0], self.trans_data[1][0])
+        p2 = (self.trans_data[0][1], self.trans_data[1][1])
+        pm1 = (self.trans_data[0][-1], self.trans_data[1][-1])
+        pm2 = (self.trans_data[0][-2], self.trans_data[1][-2])
+
+        p1p2_len = sqrt( (p2[0] - p1[0])**2 + (p2[1] - p1[1])**2 )
+        pm1pm2_len = sqrt( (pm2[0] - pm1[0])**2 + (pm2[1] - pm1[1])**2 )
+
+        self.start = (p1[0] - self.lead_in_out * (p2[0] - p1[0]) / p1p2_len, p1[1] - self.lead_in_out * (p2[1] - p1[1]) / p1p2_len)
+        self.end = (pm1[0] - self.lead_in_out * (pm2[0] - pm1[0]) / pm1pm2_len, pm1[1] - self.lead_in_out * (pm2[1] - pm1[1]) / pm1pm2_len)
 
         self.data_changed.emit()
     ###############################################

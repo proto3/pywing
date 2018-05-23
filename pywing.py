@@ -40,12 +40,25 @@ class ConnectedAirfoilsModel(QtCore.QObject):
         gcode = list()
         if(self.af_left.loaded and self.af_right.loaded):
             gcode.append("F%.2f\n" % feedrate)
+            gcode.append("G01 X%.3f Y%.3f U%.3f V%.3f\n" %
+                    (self.af_right.start[0],
+                    self.af_right.start[1],
+                    self.af_left.start[0],
+                    self.af_left.start[1]))
+
             for i in range(len(self.it_point_list_right[0])):
                 gcode.append("G01 X%.3f Y%.3f U%.3f V%.3f\n" %
                     (self.it_point_list_right[0][i],
                     self.it_point_list_right[1][i],
                     self.it_point_list_left[0][i],
                     self.it_point_list_left[1][i]))
+
+            gcode.append("G01 X%.3f Y%.3f U%.3f V%.3f\n" %
+                    (self.af_right.end[0],
+                    self.af_right.end[1],
+                    self.af_left.end[0],
+                    self.af_left.end[1]))
+
         return gcode
 
 class MachineModel(QtCore.QObject):
@@ -68,6 +81,8 @@ class AirfoilItemManager:
         self.airfoil.data_changed.connect(self.draw)
 
         self.curve = pg.PlotCurveItem([], [], pen=pg.mkPen(color=color, width=2))
+        self.lead_in = pg.PlotCurveItem([], [], pen=pg.mkPen(color=color, width=3, style=QtCore.Qt.DotLine))
+        self.lead_out = pg.PlotCurveItem([], [], pen=pg.mkPen(color=color, width=3, style=QtCore.Qt.DotLine))
 
         self.load_btn = QtGui.QPushButton("Load")
         self.load_btn.clicked.connect(self.on_load)
@@ -115,6 +130,8 @@ class AirfoilItemManager:
 
     def draw(self):
         self.curve.setData(self.airfoil.trans_data[0], self.airfoil.trans_data[1]) #TODO ensure this is atomic
+        self.lead_in.setData([self.airfoil.start[0], self.airfoil.trans_data[0][0]], [self.airfoil.start[1], self.airfoil.trans_data[1][0]])
+        self.lead_out.setData([self.airfoil.end[0], self.airfoil.trans_data[0][-1]], [self.airfoil.end[1], self.airfoil.trans_data[1][-1]])
 
     def on_load(self):
         filename, _ = QtGui.QFileDialog.getOpenFileName(self.load_btn.parent(), "Open File", airfoil_data_folder, "All Files (*)")
@@ -159,6 +176,10 @@ class SideViewWidget(QtGui.QWidget):
         plot.addItem(self.connection_lines_item)
         plot.addItem(self.aim_left.curve)
         plot.addItem(self.aim_right.curve)
+        plot.addItem(self.aim_left.lead_in)
+        plot.addItem(self.aim_right.lead_in)
+        plot.addItem(self.aim_left.lead_out)
+        plot.addItem(self.aim_right.lead_out)
         plot.addItem(self.machine_item)
 
         grid_alpha = 50
@@ -326,14 +347,15 @@ class ControlWidget(QtGui.QWidget):
         self.serial_text_item = QtGui.QTextEdit()
         self.serial_data = ""
 
-        lead_spbox = QtGui.QDoubleSpinBox()
-        lead_spbox.setRange(0, 1000)
-        lead_spbox.setValue(10)
-        lead_spbox.setPrefix("Lead in/out : ")
-        lead_spbox.setSuffix("mm")
+        self.lead_spbox = QtGui.QDoubleSpinBox()
+        self.lead_spbox.setRange(1, 1000)
+        self.lead_spbox.setValue(self._connected_airfoils.af_left.lead_in_out)
+        self.lead_spbox.setPrefix("Lead in/out : ")
+        self.lead_spbox.setSuffix("mm")
+        self.lead_spbox.valueChanged.connect(self.on_lead_change)
 
         layout.addWidget(self.feed_spbox, 0, 0)
-        layout.addWidget(lead_spbox, 1, 0)
+        layout.addWidget(self.lead_spbox, 1, 0)
         layout.addWidget(home_btn, 2, 0)
         layout.addWidget(play_btn, 3, 0)
         layout.addWidget(stop_btn, 4, 0)
@@ -384,6 +406,10 @@ class ControlWidget(QtGui.QWidget):
         self.serial_text_item.setText(self.serial_data)
 
         self.serial_thread.play(gcode)
+
+    def on_lead_change(self):
+        self._connected_airfoils.af_left.set_lead(self.lead_spbox.value())
+        self._connected_airfoils.af_right.set_lead(self.lead_spbox.value())
 
 class MainWidget(QtGui.QSplitter):
     def __init__(self, w1, w2):
