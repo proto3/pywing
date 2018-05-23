@@ -1,22 +1,26 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 from math import *
+from PyQt5 import QtCore
 import numpy as np
 import sys
+import os
 
 ################################################################################
-class Airfoil:
+class Airfoil(QtCore.QObject):
     ###############################################
+    data_changed = QtCore.pyqtSignal()
+
     def __init__(self, filename = None):
+        super().__init__()
+        self.loaded = False
+        self.name = ""
         self.r = 0
         self.s = 100
         self.t = [0, 0]
         self.d = 0
-        if filename is None :
-            self.orig_data = self.trans_data = self.spe_data = np.array([[],[]])
-            self.loaded = False
-        else:
-            self.loaded = True
+        self.orig_data = self.trans_data = np.array([[],[]])
+        if filename is not None :
             self.load(filename)
     ###############################################
     def load(self, filename):
@@ -52,6 +56,7 @@ class Airfoil:
 
         self.orig_data[0] = -self.orig_data[0]
         self.loaded = True
+        self.name = os.path.splitext(os.path.basename(filename))[0]
         self.__apply_transform()
     ###############################################
     def __str__(self):
@@ -77,7 +82,7 @@ class Airfoil:
         self.d = radius
         self.__apply_transform()
     ###############################################
-    def __dilate(self, radius):
+    def __apply_dilate(self, radius):
         x = self.orig_data[0]
         y = self.orig_data[1]
 
@@ -105,42 +110,44 @@ class Airfoil:
         if(not self.loaded):
             return
 
-        self.__dilate(self.d / self.s)
+        self.__apply_dilate(self.d / self.s)
         self.__refresh_transform_mat()
 
         z_padded = np.pad(self.dilate_data, ((0, 1), (0, 0)), 'constant', constant_values=1)
         self.trans_data = np.dot(self.tr_mat, z_padded)[:-1]
 
-        self.get_points(self.get_point_chord_list())
+        self.data_changed.emit()
     ###############################################
-    def get_points(self, chord_point_list):
+    def get_interpolated_point_list(self, degree_list):
         if(not self.loaded):
             return
 
-        self.spe_data = np.array([[],[]])
-        for i in chord_point_list:
-            w = self.get_point(i)
-            self.spe_data = np.append(self.spe_data, [[w[0]], [w[1]]], axis=1)
-        z_padded = np.pad(self.spe_data, ((0, 1), (0, 0)), 'constant', constant_values=1)
-        self.spe_data = np.dot(self.tr_mat, z_padded)[:-1]
+        it_point_list = np.array([[],[]])
+        for degree in degree_list:
+            w = self.get_interpolated_point(degree)
+            it_point_list = np.append(it_point_list, [[w[0]], [w[1]]], axis=1)
+        z_padded = np.pad(it_point_list, ((0, 1), (0, 0)), 'constant', constant_values=1)
+        it_point_list = np.dot(self.tr_mat, z_padded)[:-1]
+
+        return it_point_list
     ###############################################
-    def get_point_chord_list(self):
+    def get_degree_list(self):
         if(not self.loaded):
             return
-        point_chord_list = list()
 
+        degree_list = list()
         min_x = self.dilate_data[0][0]
         max_x = self.dilate_data[0][self.leading_edge_idx]
         for i in self.dilate_data[0][:self.leading_edge_idx]:
-            point_chord_list.append((i - min_x) / (max_x - min_x) / 2)
+            degree_list.append((i - min_x) / (max_x - min_x) / 2)
 
-        point_chord_list.append(0.5)
+        degree_list.append(0.5)
 
         min_x = self.dilate_data[0][-1]
         for i in self.dilate_data[0][self.leading_edge_idx+1:]:
-            point_chord_list.append((1-((i - min_x) / (max_x - min_x))) / 2 + 0.5)
+            degree_list.append((1-((i - min_x) / (max_x - min_x))) / 2 + 0.5)
 
-        return point_chord_list
+        return degree_list
     ###############################################
     def __compute_leading_edge(self):
         edge_candidates = np.where(self.orig_data[0] == 0)[0]
@@ -162,42 +169,42 @@ class Airfoil:
 
         return self.leading_edge_idx is not None
     ###############################################
-    def get_point(self, val):
-        if val <= 0.0 :
+    def get_interpolated_point(self, degree):
+        if degree <= 0.0 :
             return np.take(self.dilate_data, 0, axis=1)
 
-        if val == 0.5 :
+        if degree == 0.5 :
             return np.take(self.dilate_data, self.leading_edge_idx, axis=1)
 
-        if val >= 1.0 :
+        if degree >= 1.0 :
             return np.take(self.dilate_data, -1, axis=1)
 
-        if val < 0.5 :
+        if degree < 0.5 :
             min_x = self.dilate_data[0][0]
             max_x = self.dilate_data[0][self.leading_edge_idx]
-            val_scaled = (max_x - min_x)*val*2 + min_x
+            degree_scaled = (max_x - min_x)*degree*2 + min_x
 
-            next_idx = np.argmax(self.dilate_data[0] >= val_scaled)
+            next_idx = np.argmax(self.dilate_data[0] >= degree_scaled)
             prev_idx = next_idx - 1
 
             prev_p = np.take(self.dilate_data, prev_idx, axis=1)
             next_p = np.take(self.dilate_data, next_idx, axis=1)
 
             side_gap = next_p[0] - prev_p[0]
-            prev_gap = val_scaled - prev_p[0]
+            prev_gap = degree_scaled - prev_p[0]
             return prev_p + ((next_p - prev_p) * prev_gap / side_gap)
         else:
             min_x = self.dilate_data[0][-1]
             max_x = self.dilate_data[0][self.leading_edge_idx]
-            val_scaled = (max_x - min_x)*(1-val)*2 + min_x
+            degree_scaled = (max_x - min_x)*(1-degree)*2 + min_x
 
-            next_idx = np.argmax(self.dilate_data[0][self.leading_edge_idx:] <= val_scaled) + self.leading_edge_idx
+            next_idx = np.argmax(self.dilate_data[0][self.leading_edge_idx:] <= degree_scaled) + self.leading_edge_idx
             prev_idx = next_idx - 1
 
             prev_p = np.take(self.dilate_data, prev_idx, axis=1)
             next_p = np.take(self.dilate_data, next_idx, axis=1)
 
             side_gap = prev_p[0] - next_p[0]
-            prev_gap = prev_p[0] - val_scaled
+            prev_gap = prev_p[0] - degree_scaled
             return prev_p + ((next_p - prev_p) * prev_gap / side_gap)
 ################################################################################
