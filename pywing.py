@@ -8,6 +8,7 @@ import time
 import serial.tools.list_ports
 import queue
 import glob
+import enum
 
 from airfoil import Airfoil
 
@@ -74,6 +75,10 @@ class MachineModel(QtCore.QObject):
 
     def get_position(self):
         return self._position
+
+    def set_no_position(self):
+        self._position = None
+        self.data_changed.emit()
 
 class AirfoilItemManager:
     def __init__(self, airfoil, color):
@@ -214,7 +219,10 @@ class SideViewWidget(QtGui.QWidget):
 
     def draw_machine(self):
         mpos = self._machine.get_position()
-        self.machine_item.setData([mpos[0],mpos[2]], [mpos[1],mpos[3]])
+        if(mpos is not None):
+            self.machine_item.setData([mpos[0],mpos[2]], [mpos[1],mpos[3]])
+        else:
+            self.machine_item.setData([])
 
     def draw_connected(self):
         right_points = self._connected_airfoils.it_point_list_right
@@ -229,25 +237,156 @@ class SideViewWidget(QtGui.QWidget):
         self.connection_lines_item.setPath(path)
 
 class SerialThread(QtCore.QThread):
+    connection_changed = QtCore.pyqtSignal()
 
     def __init__(self, machine):
         super().__init__()
-        self.command_list = queue.Queue()
-        self.port = ""
-        self.play_request = False
         self._machine = machine
-        self.prev_status_required = time.time()
+        self.port = ""
+
+        self.connected = False
+        self.running = False
+        self.stop_request = False
+        self.connect_request = False
+        self.disconnect_request = False
+        self.gcode = []
+        self.last_status_request = time.time()
+
+        self.on_board_buf = 128
+        self.past_cmd_len = queue.Queue()
+
+        # self.connection_changed.connect(self.on_connection_change)
 
     def __del__(self):
         self.wait()
 
-    def status_request(self):
-        now = time.time()
-        if(self.prev_status_required + 0.2 < now):
-            self.serial.write(("?").encode("ascii"))
-            self.prev_status_required = now
+    def connect(self, port):
+        if(not self.connected):
+            self.port = port
+            self.connect_request = True
+        else:
+            print("already connected")
+            pass
 
-    def parse_status(self, status):
+    def disconnect(self):
+        if(self.connected):
+            if(not self.running):
+                self.disconnect_request = True
+            else:
+                print("running")
+                pass
+        else:
+            print("not connected")
+            pass
+
+    def play(self, gcode):
+        if(self.connected):
+            if(not self.running):
+                self.gcode = list(gcode)
+                self.running = True
+            else:
+                print("already running")
+                pass
+        else:
+            print("not connected")
+            pass
+
+    def stop(self):
+        if(self.connected):
+            if(self.running):
+                self.stop_request = True
+            else:
+                print("not running")
+                pass
+        else:
+            print("not connected")
+            pass
+
+    def run(self):
+        while(True):
+            if(self.connected):
+                if(self.disconnect_request):
+                    self._reset()
+
+                try:
+                    if(self.stop_request):
+                        self.serial.write(("!").encode("ascii"))
+                        self.running = False
+                        self.stop_request = False
+                except serial.SerialException:
+                    self._reset()
+                    continue
+
+                try:
+                    if(self.running):
+                        if(self.gcode):
+                            if(len(self.gcode[0]) <= self.on_board_buf):
+                                cmd = self.gcode.pop(0)
+                                self.serial.write(cmd.encode("ascii"))
+                                self.on_board_buf -= len(cmd)
+                                self.past_cmd_len.put(len(cmd))
+                        else:
+                            self.running = False
+                except serial.SerialException:
+                    self._reset()
+                    continue
+
+                try:
+                    now = time.time()
+                    if(self.last_status_request + 0.2 < now):
+                        self.serial.write(("?").encode("ascii"))
+                        self.last_status_request = now
+                except serial.SerialException:
+                    self._reset()
+                    continue
+
+                try:
+                    read_data = self.serial.readline().decode("ascii")
+                    self._process_read_data(read_data)
+                except serial.SerialException:
+                    self._reset()
+                    continue
+
+            else:
+                if(self.connect_request):
+                    self._attempt_connection(self.port)
+                    self.connect_request = False
+                else:
+                    ports = glob.glob('/dev/tty[A-Za-z]*')
+                    result = []
+                    for port in ports:
+                        try:
+                            s = serial.Serial(port)
+                            s.close()
+                            result.append(port)
+                        except (OSError, serial.SerialException):
+                            pass
+                    print(result)
+                    # TODO update spbox with ports
+                    time.sleep(0.2)
+
+    def _reset(self):
+        self.serial.close()
+        self.running = False
+        self.stop_request = False
+        self.connect_request = False
+        self.disconnect_request = False
+        self.on_board_buf = 128
+        self.past_cmd_len = queue.Queue()
+
+        self.connected = False
+        self.connection_changed.emit()
+
+    def _process_read_data(self, data):
+        if(data == 'ok\r\n'):
+            self.on_board_buf += self.past_cmd_len.get()
+        elif(data != ''):
+            if(data[0] == "<"):
+                self._parse_status(data)
+            else:
+                pass #TODO handle grbl errors
+
+    def _parse_status(self, status):
         mpos_idx = status.find("MPos:")
         mpos_str = status[mpos_idx+5:].split("|")[0].split(",")
         mpos = [float(i) for i in mpos_str]
@@ -255,63 +394,26 @@ class SerialThread(QtCore.QThread):
             mpos[3] += 0.001
         self._machine.set_position(mpos)
 
-    def play_command_list(self):
-        on_board_available_space = 128
-        sent_sizes = queue.Queue()
-        while(not self.command_list.empty()):
-            command = self.command_list.get()
-            command_size = len(command)
+    def _attempt_connection(self, port):
+        try:
+            self.serial = serial.Serial(port, 115200, timeout=2.0)
+            crlf = self.serial.readline()
+            prompt = self.serial.readline().decode("ascii")
+            if(prompt[:4] == "Grbl"):
+                self.serial.timeout = 0.1
+                self.connected = True
+                self.connection_changed.emit()
+            else:
+                print("Prompt failed.")
+        except:
+            pass
 
-            #wait for board to free enough buffer space
-            while(command_size > on_board_available_space):
-                self.status_request()
-                result = self.serial.readline().decode("ascii")
-                if(result == 'ok\r\n'):
-                    on_board_available_space += sent_sizes.get()
-                elif(result != ''): #TODO handle grbl errors
-                    if(result[0] == "<"):
-                        self.parse_status(result)
-                    else:
-                        pass #error ?
+    #TODO connecting state
 
-            # send new command
-            self.serial.write(command.encode("ascii"))
-            on_board_available_space -= command_size
-            sent_sizes.put(command_size)
-
-            self.status_request()
-
-    def play(self, gcode):
-        if(not self.play_request):
-            for command in gcode:
-                self.command_list.put(command)
-            self.play_request = True
-        else:
-            print("Error : program already running")
-
-    def run(self):
-        self.serial = serial.Serial(self.port, 115200, timeout=2.0)
-
-        crlf = self.serial.readline()
-        prompt = self.serial.readline().decode("ascii")
-        if(prompt[:4] != "Grbl"):
-            print("Error : Grbl not responding.")
-            return
-
-        self.serial.timeout = 0.1
-
-        while(True):
-            if(self.play_request):
-                self.play_command_list()
-                self.play_request = False;
-
-            self.status_request()
-            result = self.serial.readline().decode("ascii")
-            if(result != ''):
-                if(result[0] == "<"):
-                    self.parse_status(result)
-                else:
-                    pass #error ?
+    # TODO
+    # def on_connection_change(self):
+    #     if(self.connection != ConnectEnum.Connected):
+    #         self._machine.set_no_position()
 
 class ControlWidget(QtGui.QWidget):
 
@@ -319,16 +421,17 @@ class ControlWidget(QtGui.QWidget):
         super().__init__()
 
         self._connected_airfoils = connected_airfoils
-
         self.serial_thread = SerialThread(machine)
+        self.serial_thread.connection_changed.connect(self.on_connection_change)
+        self.serial_thread.start()
 
         layout = QtGui.QGridLayout()
         play_btn = QtGui.QPushButton("play")
         play_btn.clicked.connect(self.on_play)
         stop_btn = QtGui.QPushButton("stop")
-        home_btn = QtGui.QPushButton("home")
-        connect_btn = QtGui.QPushButton("connect")
-        connect_btn.clicked.connect(self.on_connect)
+        stop_btn.clicked.connect(self.on_stop)
+        self.connect_btn = QtGui.QPushButton("Connect")
+        self.connect_btn.clicked.connect(self.on_connect)
 
         self.port_box = QtGui.QComboBox()
         self.port_box.resize(300,120)
@@ -356,14 +459,13 @@ class ControlWidget(QtGui.QWidget):
 
         layout.addWidget(self.feed_spbox, 0, 0)
         layout.addWidget(self.lead_spbox, 1, 0)
-        layout.addWidget(home_btn, 2, 0)
-        layout.addWidget(play_btn, 3, 0)
-        layout.addWidget(stop_btn, 4, 0)
-        layout.addWidget(connect_btn, 5, 0)
+        layout.addWidget(play_btn, 1, 0)
+        layout.addWidget(stop_btn, 3, 0)
         layout.addWidget(self.serial_text_item, 0, 1, 5, 1)
         layout.setColumnStretch(0, 1)
         layout.setColumnStretch(1, 5)
         layout.addWidget(self.port_box, 0, 6)
+        layout.addWidget(self.connect_btn, 1, 6)
         self.setLayout(layout)
 
     def serial_ports(self):
@@ -378,9 +480,26 @@ class ControlWidget(QtGui.QWidget):
                 pass
         return result
 
+    def on_connection_change(self):
+        if(self.serial_thread.connected):
+            text = "Disconnect"
+            self.connect_btn.setFlat(False)
+        # elif(self.serial_thread.connection == ConnectEnum.Connecting):
+        #     text = "Connecting..."
+        #     self.connect_btn.setFlat(True)
+        else:
+            text = "Connect"
+            self.connect_btn.setFlat(False)
+        self.connect_btn.setText(text)
+
+    def on_stop(self):
+        self.serial_thread.stop()
+
     def on_connect(self):
-        self.serial_thread.port = self.port_box.currentText()
-        self.serial_thread.start()
+        if(self.serial_thread.connected):
+            self.serial_thread.disconnect()
+        else:
+            self.serial_thread.connect(self.port_box.currentText())
 
     def on_play(self):
         gcode = self._connected_airfoils.generate_gcode(self.feed_spbox.value())
