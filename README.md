@@ -1,7 +1,5 @@
 # Pywing
 
-***Note : Pywing is still in development, serial communication is not ready yet but you already can play with the airfoil editor.***
-
 ![alt text](images/pywing.png)
 
 Pywing is a all-in-one software for hot wire foam CNC cutting.
