@@ -2,13 +2,9 @@
 # -*- coding: utf-8 -*-
 from PyQt5 import QtCore, QtGui, Qt
 import pyqtgraph as pg
-import sys
 import numpy as np
-import time
+import sys, time, queue
 import serial.tools.list_ports
-import queue
-import glob
-import enum
 
 from airfoil import Airfoil
 
@@ -134,7 +130,7 @@ class AirfoilItemManager:
         self.name.setStyleSheet("color: rgb" + str(color))
 
     def draw(self):
-        self.curve.setData(self.airfoil.trans_data[0], self.airfoil.trans_data[1]) #TODO ensure this is atomic
+        self.curve.setData(self.airfoil.trans_data[0], self.airfoil.trans_data[1])
         self.lead_in.setData([self.airfoil.start[0], self.airfoil.trans_data[0][0]], [self.airfoil.start[1], self.airfoil.trans_data[1][0]])
         self.lead_out.setData([self.airfoil.end[0], self.airfoil.trans_data[0][-1]], [self.airfoil.end[1], self.airfoil.trans_data[1][-1]])
 
@@ -165,7 +161,6 @@ class SideViewWidget(QtGui.QWidget):
         super().__init__()
         plot = pg.PlotWidget()
 
-        # TODO test not to save them and send all data through signal (perf ?)
         self._connected_airfoils = connected_airfoils
         self._machine = machine
 
@@ -238,13 +233,16 @@ class SideViewWidget(QtGui.QWidget):
 
 class SerialThread(QtCore.QThread):
     connection_changed = QtCore.pyqtSignal()
+    port_list_changed = QtCore.pyqtSignal()
 
     def __init__(self, machine):
         super().__init__()
         self._machine = machine
         self.port = ""
+        self.port_list = []
 
         self.connected = False
+        self.connecting = False
         self.running = False
         self.stop_request = False
         self.connect_request = False
@@ -254,8 +252,6 @@ class SerialThread(QtCore.QThread):
 
         self.on_board_buf = 128
         self.past_cmd_len = queue.Queue()
-
-        # self.connection_changed.connect(self.on_connection_change)
 
     def __del__(self):
         self.wait()
@@ -352,17 +348,9 @@ class SerialThread(QtCore.QThread):
                     self._attempt_connection(self.port)
                     self.connect_request = False
                 else:
-                    ports = glob.glob('/dev/tty[A-Za-z]*')
-                    result = []
-                    for port in ports:
-                        try:
-                            s = serial.Serial(port)
-                            s.close()
-                            result.append(port)
-                        except (OSError, serial.SerialException):
-                            pass
-                    print(result)
-                    # TODO update spbox with ports
+                    self.port_list = [port.device for port in serial.tools.list_ports.comports()]
+                    self.port_list.sort()
+                    self.port_list_changed.emit()
                     time.sleep(0.2)
 
     def _reset(self):
@@ -375,6 +363,7 @@ class SerialThread(QtCore.QThread):
         self.past_cmd_len = queue.Queue()
 
         self.connected = False
+        self._machine.set_no_position()
         self.connection_changed.emit()
 
     def _process_read_data(self, data):
@@ -384,7 +373,8 @@ class SerialThread(QtCore.QThread):
             if(data[0] == "<"):
                 self._parse_status(data)
             else:
-                pass #TODO handle grbl errors
+                # handle grbl errors here
+                pass
 
     def _parse_status(self, status):
         mpos_idx = status.find("MPos:")
@@ -395,6 +385,8 @@ class SerialThread(QtCore.QThread):
         self._machine.set_position(mpos)
 
     def _attempt_connection(self, port):
+        self.connecting = True
+        self.connection_changed.emit()
         try:
             self.serial = serial.Serial(port, 115200, timeout=2.0)
             crlf = self.serial.readline()
@@ -402,18 +394,12 @@ class SerialThread(QtCore.QThread):
             if(prompt[:4] == "Grbl"):
                 self.serial.timeout = 0.1
                 self.connected = True
-                self.connection_changed.emit()
             else:
                 print("Prompt failed.")
         except:
             pass
-
-    #TODO connecting state
-
-    # TODO
-    # def on_connection_change(self):
-    #     if(self.connection != ConnectEnum.Connected):
-    #         self._machine.set_no_position()
+        self.connecting = False
+        self.connection_changed.emit()
 
 class ControlWidget(QtGui.QWidget):
 
@@ -423,6 +409,7 @@ class ControlWidget(QtGui.QWidget):
         self._connected_airfoils = connected_airfoils
         self.serial_thread = SerialThread(machine)
         self.serial_thread.connection_changed.connect(self.on_connection_change)
+        self.serial_thread.port_list_changed.connect(self.on_port_list_change)
         self.serial_thread.start()
 
         layout = QtGui.QGridLayout()
@@ -434,11 +421,8 @@ class ControlWidget(QtGui.QWidget):
         self.connect_btn.clicked.connect(self.on_connect)
 
         self.port_box = QtGui.QComboBox()
-        self.port_box.resize(300,120)
-        port_list = [port.device for port in serial.tools.list_ports.comports()]
-        port_list.sort()
-        for port_name in port_list:
-            self.port_box.addItem(port_name)
+        self.port_box.setInsertPolicy(QtGui.QComboBox.InsertAlphabetically)
+        self.port_box.setSizeAdjustPolicy(QtGui.QComboBox.AdjustToContents)
 
         self.feed_spbox = QtGui.QDoubleSpinBox()
         self.feed_spbox.setRange(1, 1000)
@@ -459,7 +443,7 @@ class ControlWidget(QtGui.QWidget):
 
         layout.addWidget(self.feed_spbox, 0, 0)
         layout.addWidget(self.lead_spbox, 1, 0)
-        layout.addWidget(play_btn, 1, 0)
+        layout.addWidget(play_btn, 2, 0)
         layout.addWidget(stop_btn, 3, 0)
         layout.addWidget(self.serial_text_item, 0, 1, 5, 1)
         layout.setColumnStretch(0, 1)
@@ -468,29 +452,34 @@ class ControlWidget(QtGui.QWidget):
         layout.addWidget(self.connect_btn, 1, 6)
         self.setLayout(layout)
 
-    def serial_ports(self):
-        ports = glob.glob('/dev/tty[A-Za-z]*')
-        result = []
-        for port in ports:
-            try:
-                s = serial.Serial(port)
-                s.close()
-                result.append(port)
-            except (OSError, serial.SerialException):
-                pass
-        return result
-
     def on_connection_change(self):
-        if(self.serial_thread.connected):
+        if(self.serial_thread.connecting):
+            text = "Connecting..."
+            self.connect_btn.setFlat(True)
+        elif(self.serial_thread.connected):
             text = "Disconnect"
             self.connect_btn.setFlat(False)
-        # elif(self.serial_thread.connection == ConnectEnum.Connecting):
-        #     text = "Connecting..."
-        #     self.connect_btn.setFlat(True)
         else:
             text = "Connect"
             self.connect_btn.setFlat(False)
+
         self.connect_btn.setText(text)
+
+    def on_port_list_change(self):
+        new_items = self.serial_thread.port_list
+        prev_items = []
+        for idx in range(self.port_box.count()):
+            prev_items.append(self.port_box.itemText(idx))
+
+        items_to_remove = list(set(prev_items) - set(new_items))
+        items_to_insert = list(set(new_items) - set(prev_items))
+        items_to_remove.sort()
+        items_to_insert.sort()
+
+        for item in items_to_remove:
+            self.port_box.removeItem(self.port_box.findText(item))
+
+        self.port_box.insertItems(0, items_to_insert)
 
     def on_stop(self):
         self.serial_thread.stop()
