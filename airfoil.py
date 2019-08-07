@@ -1,123 +1,21 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
-from math import *
-from PyQt5 import QtCore
+from PyQt5 import QtCore, QtGui, Qt
 import numpy as np
-import sys, os
+from path import *
+import os
 
-class PathGenerator(QtCore.QObject):
-    data_changed = QtCore.pyqtSignal()
-    control_changed = QtCore.pyqtSignal()
+airfoil_data_folder = QtCore.QDir.homePath() + "/.airfoils"
 
-    def __init__(self):
-        super().__init__()
-        self.initial_path = np.array([[],[]])
-        self.final_path   = np.array([[],[]])
-        self.s = 1.0        # Scale
-        self.r = 0.0        # Rotation
-        self.t = [0.0, 0.0] # Translation
-        self.k = 0.0        # Kerf width
-        self.l = 10.0       # Lead in/out length
-
-        self.tr_mat   = np.array([])
-        self.lead_in  = np.array([])
-        self.lead_out = np.array([])
-
-    def __str__(self):
-        return str(self.final_path)
-
-    def export_data(self):
-        return (self.s, self.k, self.initial_path)
-
-    def import_data(self, data):
-        self.s, self.k, self.initial_path = data
-        self._apply_transform()
-        self.control_changed.emit()
-
-    def get_path(self):
-        return self.final_path
-
-    def get_boundaries(self):
-        # return [xmin, ymin, xmax, ymax]
-        return np.concatenate((np.amin(self.final_path, axis=1), np.amax(self.final_path, axis=1)))
-
-    def scale(self, s):
-        self.s = s
-        self._apply_transform()
-
-    def rotate(self, r):
-        self.r = r
-        self._apply_transform()
-
-    def translate_x(self, t):
-        self.t[0] = t
-        self._apply_transform()
-
-    def translate_y(self, t):
-        self.t[1] = t
-        self._apply_transform()
-
-    def set_kerf_width(self, k):
-        self.k = k
-        self._apply_transform()
-
-    def set_lead_size(self, l):
-        self.l = l
-        self._apply_transform()
-
-    def _apply_transform(self):
-        if self.initial_path.size == 0:
-            return
-
-        # apply kerf width correction
-        self._apply_kerf()
-
-        r_rad = self.r / 180 * pi
-        a = self.s * cos(r_rad)
-        b = self.s * sin(r_rad)
-
-        #prepare transform matrix
-        self.tr_mat = np.array([[a,-b, self.t[0]],
-                           [b, a, self.t[1]],
-                           [0, 0,         1]])
-
-        # apply matrix
-        self.final_path = np.dot(self.tr_mat, np.insert(self.kerf_path, 2, 1.0, axis=0))[:-1]
-
-        # append lead in and out to path
-        self.lead_in  = self._lead_next(self.final_path[:, 1], self.final_path[:, 0])
-        self.lead_out = self._lead_next(self.final_path[:,-2], self.final_path[:,-1])
-        self.final_path = np.column_stack((self.lead_in, self.final_path, self.lead_out))
-
-        self.data_changed.emit()
-
-    def _apply_kerf(self):
-        tmp = self.initial_path
-        x, y = np.column_stack((2*tmp[:,0]-tmp[:,1], tmp, 2*tmp[:,-1]-tmp[:,-2]))
-
-        angle = np.arctan2(y[1:]-y[:-1], x[1:]-x[:-1])
-        diff = (angle[:-1] - angle[1:] + pi)%(2*pi)
-
-        radius = self.k / self.s
-        self.kerf_path = np.stack((
-            x[1:-1] - radius * np.cos(angle[1:] + pi + diff/2),
-            y[1:-1] - radius * np.sin(angle[1:] + pi + diff/2)))
-
-    def _lead_next(self, a, b):
-        # return c in | a---b ---- c | where c is the lead entry
-        return b + (b-a) * self.l / np.linalg.norm(b-a)
-################################################################################
 class AirfoilGenerator(PathGenerator):
-    ###############################################
-    def __init__(self, filename = None):
+    def __init__(self, color):
         super().__init__()
         self.loaded = False
-        self.name = ""
+        self.name = ''
+        self.color = color
         self.s = 100.0
         self.leading_edge_idx = 0
-        if filename is not None :
-            self.load(filename)
-    ###############################################
+
     def load(self, filename):
         x = list()
         y = list()
@@ -153,14 +51,14 @@ class AirfoilGenerator(PathGenerator):
         self.loaded = True
         self.name = os.path.splitext(os.path.basename(filename))[0]
         self._apply_transform()
-    ###############################################
-    def export_data(self):
-        return super(AirfoilGenerator, self).export_data() , self.name, self.loaded, self.leading_edge_idx
-    ###############################################
-    def import_data(self, data):
-        self.name, self.loaded, self.leading_edge_idx = data[1:]
-        super(AirfoilGenerator, self).import_data(data[0])
-    ###############################################
+
+    def export_tuple(self):
+        return super(AirfoilGenerator, self).export_tuple(), self.name, self.color, self.loaded, self.leading_edge_idx
+
+    def import_tuple(self, tuple):
+        self.name, self.color, self.loaded, self.leading_edge_idx = tuple[1:]
+        super(AirfoilGenerator, self).import_tuple(tuple[0])
+
     def get_interpolated_points(self, degree_list):
         if(not self.loaded):
             return
@@ -173,7 +71,7 @@ class AirfoilGenerator(PathGenerator):
         itpl_points = np.dot(self.tr_mat, z_padded)[:-1]
 
         return np.column_stack((self.lead_in, itpl_points, self.lead_out))
-    ###############################################
+
     def get_degree_list(self):
         if(not self.loaded):
             return
@@ -191,7 +89,7 @@ class AirfoilGenerator(PathGenerator):
             degree_list.append((1-((i - min_x) / (max_x - min_x))) / 2 + 0.5)
 
         return degree_list
-    ###############################################
+
     def __compute_leading_edge(self):
         edge_candidates = np.where(self.initial_path[0] == 0)[0]
         self.leading_edge_idx = None
@@ -211,7 +109,7 @@ class AirfoilGenerator(PathGenerator):
             print("Error : More than two leading edge candidates.")
 
         return self.leading_edge_idx is not None
-    ###############################################
+
     def get_interpolated_point(self, degree):
         if degree <= 0.0 :
             return np.take(self.kerf_path, 0, axis=1)
@@ -251,4 +149,64 @@ class AirfoilGenerator(PathGenerator):
             prev_gap = prev_p[0] - degree_scaled
             return prev_p + ((next_p - prev_p) * prev_gap / side_gap)
 
-################################################################################
+class AirfoilWidget(QtGui.QWidget):
+    def __init__(self, airfoil):
+        super().__init__()
+        self.airfoil = airfoil
+
+        self.name = QtGui.QLabel(text=self.get_display_name())
+        self.name.setAlignment(Qt.Qt.AlignCenter)
+        self.name.setStyleSheet("color: rgb" + str(self.airfoil.color))
+
+        self.load_btn = QtGui.QPushButton("Load")
+        self.load_btn.clicked.connect(self.on_load)
+
+        self.scale_spbox = QtGui.QDoubleSpinBox()
+        self.scale_spbox.setRange(1, 10000)
+        self.scale_spbox.setValue(self.airfoil.s)
+        self.scale_spbox.setPrefix("S : ")
+        self.scale_spbox.setSuffix("mm")
+        self.scale_spbox.valueChanged.connect(self.on_scale)
+
+        self.kerf_spbox = QtGui.QDoubleSpinBox()
+        self.kerf_spbox.setRange(0, 100)
+        self.kerf_spbox.setValue(self.airfoil.k)
+        self.kerf_spbox.setSingleStep(0.1)
+        self.kerf_spbox.setPrefix("K : ")
+        self.kerf_spbox.setSuffix("mm")
+        self.kerf_spbox.valueChanged.connect(self.on_kerf)
+
+        self.widgets = (self.name, self.load_btn, self.scale_spbox, self.kerf_spbox)
+
+        layout = QtGui.QVBoxLayout()
+        [layout.addWidget(w) for w in self.widgets]
+        layout.addStretch()
+        self.setLayout(layout)
+
+        self.airfoil.reset.connect(self.update)
+
+    def on_load(self):
+        filename, _ = QtGui.QFileDialog.getOpenFileName(self.load_btn.parent(), "Open File", airfoil_data_folder, "Airfoil Files (*.dat *.cor);; All Files (*)")
+        if filename:
+            self.airfoil.load(filename)
+            self.name.setText(self.airfoil.name)
+
+    def on_scale(self):
+        self.airfoil.scale(self.scale_spbox.value())
+
+    def on_kerf(self):
+        self.airfoil.set_kerf_width(self.kerf_spbox.value())
+
+    def update(self):
+        [w.blockSignals(True) for w in self.widgets]
+        self.name.setText(self.get_display_name())
+        self.name.setStyleSheet("color: rgb" + str(self.airfoil.color))
+        self.scale_spbox.setValue(self.airfoil.s)
+        self.kerf_spbox.setValue(self.airfoil.k)
+        [w.blockSignals(False) for w in self.widgets]
+
+    def get_display_name(self):
+        if self.airfoil.loaded:
+            return self.airfoil.name
+        else:
+            return 'No airfoil loaded'
