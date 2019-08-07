@@ -3,11 +3,11 @@
 from math import *
 from PyQt5 import QtCore
 import numpy as np
-import sys
-import os
+import sys, os
 
 class PathGenerator(QtCore.QObject):
     data_changed = QtCore.pyqtSignal()
+    control_changed = QtCore.pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -25,6 +25,14 @@ class PathGenerator(QtCore.QObject):
 
     def __str__(self):
         return str(self.final_path)
+
+    def export_data(self):
+        return (self.s, self.k, self.initial_path)
+
+    def import_data(self, data):
+        self.s, self.k, self.initial_path = data
+        self._apply_transform()
+        self.control_changed.emit()
 
     def get_path(self):
         return self.final_path
@@ -99,13 +107,14 @@ class PathGenerator(QtCore.QObject):
         # return c in | a---b ---- c | where c is the lead entry
         return b + (b-a) * self.l / np.linalg.norm(b-a)
 ################################################################################
-class AirfoilModel(PathGenerator):
+class AirfoilGenerator(PathGenerator):
     ###############################################
     def __init__(self, filename = None):
         super().__init__()
         self.loaded = False
         self.name = ""
         self.s = 100.0
+        self.leading_edge_idx = 0
         if filename is not None :
             self.load(filename)
     ###############################################
@@ -144,6 +153,13 @@ class AirfoilModel(PathGenerator):
         self.loaded = True
         self.name = os.path.splitext(os.path.basename(filename))[0]
         self._apply_transform()
+    ###############################################
+    def export_data(self):
+        return super(AirfoilGenerator, self).export_data() , self.name, self.loaded, self.leading_edge_idx
+    ###############################################
+    def import_data(self, data):
+        self.name, self.loaded, self.leading_edge_idx = data[1:]
+        super(AirfoilGenerator, self).import_data(data[0])
     ###############################################
     def get_interpolated_points(self, degree_list):
         if(not self.loaded):

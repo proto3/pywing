@@ -5,16 +5,17 @@ import pyqtgraph as pg
 import pyqtgraph.opengl as gl
 import numpy as np
 import sys, time, queue, math
+import pickle
 import serial.tools.list_ports
 
-from airfoil import AirfoilModel
+from airfoil import AirfoilGenerator
 
 airfoil_data_folder = QtCore.QDir.homePath() + "/.airfoils"
 
-class InterpolationModel(QtCore.QObject):
-    data_changed = QtCore.pyqtSignal()
-    bloc_changed = QtCore.pyqtSignal()
-    bloc_changed_internal = QtCore.pyqtSignal()
+class CutProcessor(QtCore.QObject):
+    display_refresh = QtCore.pyqtSignal()
+    internal_refresh = QtCore.pyqtSignal()
+    control_refresh = QtCore.pyqtSignal()
 
     def __init__(self, machine_model, abs_path, rel_path):
         super().__init__()
@@ -32,6 +33,7 @@ class InterpolationModel(QtCore.QObject):
         self.rel_rot = 0.0
         self.rel_tx  = 0.0
         self.rel_ty  = 0.0
+
         self.abs_rot = 0.0
         self.abs_tx  = 100.0 + self.lead_in_out
         self.abs_ty  = 0.0
@@ -46,7 +48,7 @@ class InterpolationModel(QtCore.QObject):
 
         self._path_generator_l.data_changed.connect(self._connect_paths)
         self._path_generator_r.data_changed.connect(self._connect_paths)
-        self.bloc_changed.connect(self._connect_paths)
+        self.internal_refresh.connect(self._connect_paths)
 
     def _connect_paths(self):
         if self.is_synced():
@@ -69,7 +71,7 @@ class InterpolationModel(QtCore.QObject):
         self._path_l = np.insert(self._path_generator_l.get_path(), 1, self._bloc_offset + self._bloc_width, axis=0)
         self._path_r = np.insert(self._path_generator_r.get_path(), 1, self._bloc_offset, axis=0)
 
-        self.data_changed.emit()
+        self.display_refresh.emit()
 
     def generate_gcode(self, feedrate):
         gcode = list()
@@ -138,11 +140,11 @@ class InterpolationModel(QtCore.QObject):
 
     def set_bloc_width(self, width):
         self._bloc_width = width
-        self.bloc_changed.emit()
+        self.internal_refresh.emit()
 
     def set_bloc_offset(self, offset):
         self._bloc_offset = offset
-        self.bloc_changed.emit()
+        self.internal_refresh.emit()
 
     def _apply_transform(self):
         self._path_generator_abs.rotate(self.abs_rot)
@@ -195,8 +197,54 @@ class InterpolationModel(QtCore.QObject):
             self._path_generator_r = self._path_generator_rel
 
         self._bloc_offset = self._machine_model.get_width() - self._bloc_width - self._bloc_offset
-        self._path_generator_l.data_changed.emit()
-        self.bloc_changed_internal.emit()
+
+        self.control_refresh.emit()
+        self.internal_refresh.emit()
+
+    def save(self, filename):
+        fp = open(filename,'wb+')
+
+        pickle.dump(self.abs_on_right, fp)
+        pickle.dump(self.lead_in_out, fp)
+        pickle.dump(self.lead_in_out, fp)
+        pickle.dump(self.rel_rot, fp)
+        pickle.dump(self.rel_tx, fp)
+        pickle.dump(self.rel_ty, fp)
+        pickle.dump(self.abs_rot, fp)
+        pickle.dump(self.abs_tx, fp)
+        pickle.dump(self.abs_ty, fp)
+        pickle.dump(self._bloc_width, fp)
+        pickle.dump(self._bloc_offset, fp)
+        pickle.dump(self._path_generator_abs.export_data(), fp)
+        pickle.dump(self._path_generator_rel.export_data(), fp)
+
+        fp.close()
+
+    def load(self, filename):
+        fp = open(filename, 'rb')
+
+        prev = self.abs_on_right
+        self.abs_on_right = pickle.load(fp)
+        self.lead_in_out = pickle.load(fp)
+        self.lead_in_out = pickle.load(fp)
+        self.rel_rot = pickle.load(fp)
+        self.rel_tx = pickle.load(fp)
+        self.rel_ty = pickle.load(fp)
+        self.abs_rot = pickle.load(fp)
+        self.abs_tx = pickle.load(fp)
+        self.abs_ty = pickle.load(fp)
+        self._bloc_width = pickle.load(fp)
+        self._bloc_offset = pickle.load(fp)
+        self._path_generator_abs.import_data(pickle.load(fp))
+        self._path_generator_rel.import_data(pickle.load(fp))
+
+        fp.close()
+
+        if(prev != self.abs_on_right):
+            self.switch_ref_side()
+            relset_widget.on_switch()
+        self._apply_transform()
+        self.control_refresh.emit()
 
 class MachineModel(QtCore.QObject):
     state_changed = QtCore.pyqtSignal()
@@ -247,21 +295,23 @@ class AirfoilWidget(QtGui.QWidget):
         self.scale_spbox.setSuffix("mm")
         self.scale_spbox.valueChanged.connect(self.on_scale)
 
-        self.dilate_spbox = QtGui.QDoubleSpinBox()
-        self.dilate_spbox.setRange(0, 100)
-        self.dilate_spbox.setValue(self._airfoil.k)
-        self.dilate_spbox.setSingleStep(0.1)
-        self.dilate_spbox.setPrefix("D : ")
-        self.dilate_spbox.setSuffix("mm")
-        self.dilate_spbox.valueChanged.connect(self.on_dilate)
+        self.kerf_spbox = QtGui.QDoubleSpinBox()
+        self.kerf_spbox.setRange(0, 100)
+        self.kerf_spbox.setValue(self._airfoil.k)
+        self.kerf_spbox.setSingleStep(0.1)
+        self.kerf_spbox.setPrefix("D : ")
+        self.kerf_spbox.setSuffix("mm")
+        self.kerf_spbox.valueChanged.connect(self.on_kerf)
 
         layout = QtGui.QVBoxLayout()
         layout.addWidget(self.name)
         layout.addWidget(self.load_btn)
         layout.addWidget(self.scale_spbox)
-        layout.addWidget(self.dilate_spbox)
+        layout.addWidget(self.kerf_spbox)
         layout.addStretch()
         self.setLayout(layout)
+
+        self._airfoil.control_changed.connect(self.update)
 
     def on_load(self):
         filename, _ = QtGui.QFileDialog.getOpenFileName(self.load_btn.parent(), "Open File", airfoil_data_folder, "All Files (*)")
@@ -272,14 +322,23 @@ class AirfoilWidget(QtGui.QWidget):
     def on_scale(self):
         self._airfoil.scale(self.scale_spbox.value())
 
-    def on_dilate(self):
-        self._airfoil.set_kerf_width(self.dilate_spbox.value())
+    def on_kerf(self):
+        self._airfoil.set_kerf_width(self.kerf_spbox.value())
+
+    def update(self):
+        self.scale_spbox.blockSignals(True)
+        self.kerf_spbox.blockSignals(True)
+        self.name.setText(self._airfoil.name)
+        self.scale_spbox.setValue(self._airfoil.s)
+        self.kerf_spbox.setValue(self._airfoil.k)
+        self.scale_spbox.blockSignals(False)
+        self.kerf_spbox.blockSignals(False)
 
 class GraphicViewWidget(gl.GLViewWidget):
 
-    def __init__(self, interpolation_model, machine, abs_color, rel_color):
+    def __init__(self, cut_processor, machine, abs_color, rel_color):
         super().__init__()
-        self._itpl_model = interpolation_model
+        self._cut_proc = cut_processor
         self._machine = machine
 
         length, width, height = self._machine.get_dimensions()
@@ -302,7 +361,7 @@ class GraphicViewWidget(gl.GLViewWidget):
 
         self._abs_color = abs_color
         self._rel_color = rel_color
-        abs_right = self._itpl_model.is_abs_on_right()
+        abs_right = self._cut_proc.is_abs_on_right()
         color_r = abs_color_fp if abs_right else rel_color_fp
         color_l = rel_color_fp if abs_right else abs_color_fp
         self.path_item_r = gl.GLLinePlotItem(color=color_r, width=3.0, antialias=True, mode='line_strip')
@@ -331,7 +390,7 @@ class GraphicViewWidget(gl.GLViewWidget):
         self.addItem(self._machine_path_item_r)
         self.addItem(self._machine_path_item_l)
 
-        self._itpl_model.data_changed.connect(self.draw_paths)
+        self._cut_proc.display_refresh.connect(self.draw_paths)
         self._machine.properties_changed.connect(self.draw_paths)
         self._machine.state_changed.connect(self.draw_machine_state)
 
@@ -346,33 +405,33 @@ class GraphicViewWidget(gl.GLViewWidget):
             self.machine_item.setData(pos=np.array())
 
     def draw_paths(self):
-        paths = self._itpl_model.get_paths()
-        abs_right = self._itpl_model.is_abs_on_right()
+        paths = self._cut_proc.get_paths()
+        abs_right = self._cut_proc.is_abs_on_right()
         color_r = abs_color_fp if abs_right else rel_color_fp
         color_l = rel_color_fp if abs_right else abs_color_fp
         self.path_item_l.setData(pos=paths[0].transpose(), color=color_l)
         self.path_item_r.setData(pos=paths[1].transpose(), color=color_r)
 
-        if(not self._itpl_model.is_synced()):
+        if(not self._cut_proc.is_synced()):
             return
 
-        machine_paths = self._itpl_model.get_machine_paths()
+        machine_paths = self._cut_proc.get_machine_paths()
         self._machine_path_item_l.setData(pos = machine_paths[0].transpose())
         self._machine_path_item_r.setData(pos = machine_paths[1].transpose())
 
         # wire_lines = np.concatenate((machine_paths[0].transpose(), machine_paths[1].transpose()), axis=1).reshape(len(machine_paths[0][0])*2,3)
         # self.wire_lines_item.setData(pos=wire_lines)
 
-        synced_paths = self._itpl_model.get_synced_paths()
+        synced_paths = self._cut_proc.get_synced_paths()
         connection_lines = np.concatenate((synced_paths[0].transpose(), synced_paths[1].transpose()), axis=1).reshape(len(synced_paths[0][0])*2,3)
         self.connection_lines_item.setData(pos=connection_lines)
 
-        limits = self._itpl_model.get_synced_boundaries()
+        limits = self._cut_proc.get_synced_boundaries()
 
         length, width, height = machine.get_dimensions()
 
-        left_bloc = self._itpl_model._bloc_offset+self._itpl_model._bloc_width
-        right_bloc = self._itpl_model._bloc_offset
+        left_bloc = self._cut_proc._bloc_offset+self._cut_proc._bloc_width
+        right_bloc = self._cut_proc._bloc_offset
         vertices = np.array([
             [limits[0], left_bloc, limits[1]],
             [limits[0], right_bloc, limits[1]],
@@ -577,10 +636,10 @@ class SerialThread(QtCore.QThread):
 
 class CuttingWidget(QtGui.QWidget):
 
-    def __init__(self, interpolation_model, machine):
+    def __init__(self, cut_processor, machine):
         super().__init__()
 
-        self._itpl_model = interpolation_model
+        self._cut_proc = cut_processor
         self._machine = machine
         self.serial_thread = SerialThread(machine)
         self.serial_thread.connection_changed.connect(self.on_connection_change)
@@ -594,6 +653,8 @@ class CuttingWidget(QtGui.QWidget):
         self.connect_btn = QtGui.QPushButton("Connect")
         self.connect_btn.clicked.connect(self.on_connect)
 
+        self.save_btn = QtGui.QPushButton("Save project")
+        self.save_btn.clicked.connect(self.on_save)
         self.load_btn = QtGui.QPushButton("Load project")
         self.load_btn.clicked.connect(self.on_load)
 
@@ -613,22 +674,22 @@ class CuttingWidget(QtGui.QWidget):
 
         self.lead_spbox = QtGui.QDoubleSpinBox()
         self.lead_spbox.setRange(1, 1000)
-        self.lead_spbox.setValue(self._itpl_model.lead_in_out)
+        self.lead_spbox.setValue(self._cut_proc.lead_in_out)
         self.lead_spbox.setPrefix("Lead in/out : ")
         self.lead_spbox.setSuffix("mm")
         self.lead_spbox.valueChanged.connect(self.on_lead_change)
 
         self.bloc_width_spbox = QtGui.QDoubleSpinBox()
         self.bloc_width_spbox.setRange(1, self._machine.get_width())
-        self.bloc_width_spbox.setValue(self._itpl_model._bloc_width)
+        self.bloc_width_spbox.setValue(self._cut_proc._bloc_width)
         self.bloc_width_spbox.setPrefix("Bloc width : ")
         self.bloc_width_spbox.setSuffix("mm")
         self.bloc_width_spbox.valueChanged.connect(self.on_bloc_width_change)
 
         self.bloc_offset_spbox = QtGui.QDoubleSpinBox()
         self.bloc_offset_spbox.setRange(0, self._machine.get_width() - self.bloc_width_spbox.value())
-        self.bloc_offset_spbox.setValue(self._itpl_model._bloc_offset)
-        self._itpl_model.bloc_changed_internal.connect(self.set_bloc_offset_display)
+        self.bloc_offset_spbox.setValue(self._cut_proc._bloc_offset)
+        self._cut_proc.control_refresh.connect(self.set_bloc_offset_display)
         self.bloc_offset_spbox.setPrefix("Bloc offset : ")
         self.bloc_offset_spbox.setSuffix("mm")
         self.bloc_offset_spbox.valueChanged.connect(self.on_bloc_offset_change)
@@ -645,9 +706,12 @@ class CuttingWidget(QtGui.QWidget):
         layout.setColumnStretch(1, 5)
         layout.addWidget(self.port_box, 0, 6)
         layout.addWidget(self.connect_btn, 1, 6)
+        layout.addWidget(self.save_btn, 2, 6)
         layout.addWidget(self.load_btn, 3, 6)
 
         self.setLayout(layout)
+
+        self._cut_proc.control_refresh.connect(self.update)
 
     def on_connection_change(self):
         if(self.serial_thread.connecting):
@@ -687,27 +751,34 @@ class CuttingWidget(QtGui.QWidget):
         else:
             self.serial_thread.connect(self.port_box.currentText())
 
+    def on_save(self):
+        filename, _ = QtGui.QFileDialog.getSaveFileName(self.save_btn.parent(), "Save project", QtCore.QDir.homePath() +"/example.pw", ".pw Files (*.pw) ;; All Files (*)")
+        if filename:
+            self._cut_proc.save(filename)
+
     def on_load(self):
-        pass
+        filename, _ = QtGui.QFileDialog.getOpenFileName(self.load_btn.parent(), "Open project", QtCore.QDir.homePath(), ".pw Files (*.pw) ;; All Files (*)")
+        if filename:
+            self._cut_proc.load(filename)
 
     def on_play(self):
-        gcode = self._itpl_model.generate_gcode(self.feed_spbox.value())
+        gcode = self._cut_proc.generate_gcode(self.feed_spbox.value())
 
         self.serial_data = ""
-        self.serial_data += ";Left  airfoil : " + self._itpl_model._path_generator_l.name
+        self.serial_data += ";Left  airfoil : " + self._cut_proc._path_generator_l.name
         self.serial_data += (" | R:%.2f S%.2f TX%.2f TY%.2f D%.2f\n" %
-                (self._itpl_model._path_generator_l.r,
-                self._itpl_model._path_generator_l.s,
-                self._itpl_model._path_generator_l.t[0],
-                self._itpl_model._path_generator_l.t[1],
-                self._itpl_model._path_generator_l.k))
-        self.serial_data += ";Right airfoil : " + self._itpl_model._path_generator_r.name
+                (self._cut_proc._path_generator_l.r,
+                self._cut_proc._path_generator_l.s,
+                self._cut_proc._path_generator_l.t[0],
+                self._cut_proc._path_generator_l.t[1],
+                self._cut_proc._path_generator_l.k))
+        self.serial_data += ";Right airfoil : " + self._cut_proc._path_generator_r.name
         self.serial_data += (" | R:%.2f S%.2f TX%.2f TY%.2f D%.2f\n" %
-                (self._itpl_model._path_generator_r.r,
-                self._itpl_model._path_generator_r.s,
-                self._itpl_model._path_generator_r.t[0],
-                self._itpl_model._path_generator_r.t[1],
-                self._itpl_model._path_generator_r.k))
+                (self._cut_proc._path_generator_r.r,
+                self._cut_proc._path_generator_r.s,
+                self._cut_proc._path_generator_r.t[0],
+                self._cut_proc._path_generator_r.t[1],
+                self._cut_proc._path_generator_r.k))
 
         for command in gcode:
             self.serial_data += command
@@ -716,45 +787,56 @@ class CuttingWidget(QtGui.QWidget):
         self.serial_thread.play(gcode)
 
     def on_lead_change(self):
-        self._itpl_model.set_lead_size(self.lead_spbox.value())
+        self._cut_proc.set_lead_size(self.lead_spbox.value())
 
     def on_bloc_width_change(self):
-        self._itpl_model.set_bloc_width(self.bloc_width_spbox.value())
+        self._cut_proc.set_bloc_width(self.bloc_width_spbox.value())
         self.bloc_offset_spbox.setMaximum(self._machine.get_width() - self.bloc_width_spbox.value())
 
     def on_bloc_offset_change(self):
-        self._itpl_model.set_bloc_offset(self.bloc_offset_spbox.value())
+        self._cut_proc.set_bloc_offset(self.bloc_offset_spbox.value())
 
     def set_bloc_offset_display(self):
-        self.bloc_offset_spbox.setValue(self._itpl_model._bloc_offset)
+        self.bloc_offset_spbox.setValue(self._cut_proc._bloc_offset)
+
+    def update(self):
+        self.lead_spbox.blockSignals(True)
+        self.bloc_offset_spbox.blockSignals(True)
+        self.bloc_width_spbox.blockSignals(True)
+        self.lead_spbox.setValue(self._cut_proc.lead_in_out)
+        self.bloc_offset_spbox.setValue(self._cut_proc._bloc_offset)
+        self.bloc_width_spbox.setValue(self._cut_proc._bloc_width)
+        self.lead_spbox.blockSignals(False)
+        self.bloc_offset_spbox.blockSignals(False)
+        self.bloc_width_spbox.blockSignals(False)
 
 class RelativeSettingsWidget(QtGui.QWidget):
 
-    def __init__(self, interpolation_model):
+    def __init__(self, cut_processor):
         super().__init__()
 
-        self._itpl_model = interpolation_model
+        self._cut_proc = cut_processor
 
         self.name = QtGui.QLabel("Relative", alignment=Qt.Qt.AlignCenter)
 
         self.rot_spbox = QtGui.QDoubleSpinBox()
         self.rot_spbox.setRange(-90, 90)
         self.rot_spbox.setSingleStep(0.1)
-        self.rot_spbox.setValue(self._itpl_model.rel_rot)
+        self.rot_spbox.setValue(self._cut_proc.rel_rot)
         self.rot_spbox.setPrefix("R : ")
         self.rot_spbox.setSuffix("°")
         self.rot_spbox.valueChanged.connect(self.on_rot)
 
         self.tx_spbox = QtGui.QDoubleSpinBox()
         self.tx_spbox.setRange(-10000, 10000)
-        self.tx_spbox.setValue(self._itpl_model.rel_tx)
+        self.tx_spbox.setValue(self._cut_proc.rel_tx)
         self.tx_spbox.setPrefix("TX : ")
         self.tx_spbox.setSuffix("mm")
         self.tx_spbox.valueChanged.connect(self.on_tx)
 
         self.ty_spbox = QtGui.QDoubleSpinBox()
         self.ty_spbox.setRange(-10000, 10000)
-        self.ty_spbox.setValue(self._itpl_model.rel_ty)
+        self.ty_spbox.setValue(self._cut_proc.rel_ty)
         self.ty_spbox.setPrefix("TY : ")
         self.ty_spbox.setSuffix("mm")
         self.ty_spbox.valueChanged.connect(self.on_ty)
@@ -770,46 +852,59 @@ class RelativeSettingsWidget(QtGui.QWidget):
         layout.addWidget(self.switch_btn)
         self.setLayout(layout)
 
+        self._cut_proc.control_refresh.connect(self.update)
+
     def on_rot(self):
-        self._itpl_model.rotate_rel(self.rot_spbox.value())
+        self._cut_proc.rotate_rel(self.rot_spbox.value())
 
     def on_tx(self):
-        self._itpl_model.translate_x_rel(self.tx_spbox.value())
+        self._cut_proc.translate_x_rel(self.tx_spbox.value())
 
     def on_ty(self):
-        self._itpl_model.translate_y_rel(self.ty_spbox.value())
+        self._cut_proc.translate_y_rel(self.ty_spbox.value())
 
     def on_switch(self):
-        self._itpl_model.switch_ref_side()
+        self._cut_proc.switch_ref_side()
         airfoil_widget_switch.switch()
+
+    def update(self):
+        self.rot_spbox.blockSignals(True)
+        self.tx_spbox.blockSignals(True)
+        self.ty_spbox.blockSignals(True)
+        self.rot_spbox.setValue(self._cut_proc.rel_rot)
+        self.tx_spbox.setValue(self._cut_proc.rel_tx)
+        self.ty_spbox.setValue(self._cut_proc.rel_ty)
+        self.rot_spbox.blockSignals(False)
+        self.tx_spbox.blockSignals(False)
+        self.ty_spbox.blockSignals(False)
 
 class AbsoluteSettingsWidget(QtGui.QWidget):
 
-    def __init__(self, interpolation_model):
+    def __init__(self, cut_processor):
         super().__init__()
 
-        self._itpl_model = interpolation_model
+        self._cut_proc = cut_processor
 
         self.name = QtGui.QLabel("Absolute", alignment=Qt.Qt.AlignCenter)
 
         self.rot_spbox = QtGui.QDoubleSpinBox()
         self.rot_spbox.setRange(-90, 90)
         self.rot_spbox.setSingleStep(0.1)
-        self.rot_spbox.setValue(self._itpl_model.abs_rot)
+        self.rot_spbox.setValue(self._cut_proc.abs_rot)
         self.rot_spbox.setPrefix("R : ")
         self.rot_spbox.setSuffix("°")
         self.rot_spbox.valueChanged.connect(self.on_rot)
 
         self.tx_spbox = QtGui.QDoubleSpinBox()
         self.tx_spbox.setRange(-10000, 10000)
-        self.tx_spbox.setValue(self._itpl_model.abs_tx)
+        self.tx_spbox.setValue(self._cut_proc.abs_tx)
         self.tx_spbox.setPrefix("TX : ")
         self.tx_spbox.setSuffix("mm")
         self.tx_spbox.valueChanged.connect(self.on_tx)
 
         self.ty_spbox = QtGui.QDoubleSpinBox()
         self.ty_spbox.setRange(-10000, 10000)
-        self.ty_spbox.setValue(self._itpl_model.abs_ty)
+        self.ty_spbox.setValue(self._cut_proc.abs_ty)
         self.ty_spbox.setPrefix("TY : ")
         self.ty_spbox.setSuffix("mm")
         self.ty_spbox.valueChanged.connect(self.on_ty)
@@ -825,31 +920,44 @@ class AbsoluteSettingsWidget(QtGui.QWidget):
         layout.addWidget(self.auto_align_btn)
         self.setLayout(layout)
 
+        self._cut_proc.control_refresh.connect(self.update)
+
     def on_rot(self):
-        self._itpl_model.rotate_abs(self.rot_spbox.value())
+        self._cut_proc.rotate_abs(self.rot_spbox.value())
 
     def on_tx(self):
-        self._itpl_model.translate_x_abs(self.tx_spbox.value())
+        self._cut_proc.translate_x_abs(self.tx_spbox.value())
 
     def on_ty(self):
-        self._itpl_model.translate_y_abs(self.ty_spbox.value())
+        self._cut_proc.translate_y_abs(self.ty_spbox.value())
 
     def on_auto_align(self):
-        if(self._itpl_model.is_synced()):
+        if(self._cut_proc.is_synced()):
             margin = 5
-            bndr = self._itpl_model.get_machine_boundaries()
+            bndr = self._cut_proc.get_machine_boundaries()
             absset_widget.tx_spbox.setValue(self.tx_spbox.value()-bndr[0] + margin)
             absset_widget.ty_spbox.setValue(self.ty_spbox.value()-bndr[1] + margin)
 
+    def update(self):
+        self.rot_spbox.blockSignals(True)
+        self.tx_spbox.blockSignals(True)
+        self.ty_spbox.blockSignals(True)
+        self.rot_spbox.setValue(self._cut_proc.abs_rot)
+        self.tx_spbox.setValue(self._cut_proc.abs_tx)
+        self.ty_spbox.setValue(self._cut_proc.abs_ty)
+        self.rot_spbox.blockSignals(False)
+        self.tx_spbox.blockSignals(False)
+        self.ty_spbox.blockSignals(False)
+
 class AirfoilWidgetSwitch():
-    def __init__(self, itpl_model, layout, airfoil_widget_abs, airfoil_widget_rel):
-        self._itpl_model = itpl_model
+    def __init__(self, cut_proc, layout, airfoil_widget_abs, airfoil_widget_rel):
+        self._cut_proc = cut_proc
         self._layout = layout
         self._airfoil_widget_abs = airfoil_widget_abs
         self._airfoil_widget_rel = airfoil_widget_rel
 
     def switch(self):
-        abs_on_right = self._itpl_model.is_abs_on_right()
+        abs_on_right = self._cut_proc.is_abs_on_right()
         self._layout.removeWidget(self._airfoil_widget_abs)
         self._layout.removeWidget(self._airfoil_widget_rel)
         self._layout.addWidget(self._airfoil_widget_abs,0,3 if abs_on_right else 0)
@@ -867,16 +975,17 @@ if __name__ == '__main__':
     rel_color_fp = tuple(i/255 for i in rel_color) + (1.0,)
 
     machine = MachineModel()
-    airfoil_abs = AirfoilModel()
-    airfoil_rel = AirfoilModel()
+    airfoil_abs = AirfoilGenerator()
+    airfoil_rel = AirfoilGenerator()
     airfoil_widget_abs = AirfoilWidget(airfoil_abs, abs_color)
     airfoil_widget_rel = AirfoilWidget(airfoil_rel, rel_color)
-    itpl_model = InterpolationModel(machine, abs_path = airfoil_abs, rel_path = airfoil_rel)
+    cut_proc = CutProcessor(machine, abs_path = airfoil_abs, rel_path = airfoil_rel)
 
-    graphic_view_widget = GraphicViewWidget(itpl_model, machine, abs_color_fp, rel_color_fp)
-    cutting_widget = CuttingWidget(itpl_model, machine)
-    relset_widget = RelativeSettingsWidget(itpl_model)
-    absset_widget = AbsoluteSettingsWidget(itpl_model)
+    graphic_view_widget = GraphicViewWidget(cut_proc, machine, abs_color_fp, rel_color_fp)
+    cutting_widget = CuttingWidget(cut_proc, machine)
+
+    relset_widget = RelativeSettingsWidget(cut_proc)
+    absset_widget = AbsoluteSettingsWidget(cut_proc)
 
     top_widget = QtGui.QWidget()
     grid_layout = QtGui.QGridLayout()
@@ -887,7 +996,7 @@ if __name__ == '__main__':
     grid_layout.addWidget(airfoil_widget_abs,0,3)
     grid_layout.addWidget(absset_widget,1,3)
     top_widget.setLayout(grid_layout)
-    airfoil_widget_switch = AirfoilWidgetSwitch(itpl_model, grid_layout, airfoil_widget_abs, airfoil_widget_rel)
+    airfoil_widget_switch = AirfoilWidgetSwitch(cut_proc, grid_layout, airfoil_widget_abs, airfoil_widget_rel)
 
     main_widget = QtGui.QWidget()
     layout = QtGui.QVBoxLayout()
