@@ -314,7 +314,7 @@ class AirfoilWidget(QtGui.QWidget):
         self._airfoil.control_changed.connect(self.update)
 
     def on_load(self):
-        filename, _ = QtGui.QFileDialog.getOpenFileName(self.load_btn.parent(), "Open File", airfoil_data_folder, "All Files (*)")
+        filename, _ = QtGui.QFileDialog.getOpenFileName(self.load_btn.parent(), "Open File", airfoil_data_folder, "Airfoil Files (*.dat *.cor);; All Files (*)")
         if filename:
             self._airfoil.load(filename)
             self.name.setText(self._airfoil.name)
