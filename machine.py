@@ -81,7 +81,7 @@ class SerialThread(QtCore.QThread):
     def play(self, gcode):
         if(self.connected):
             if(not self.running):
-                self.gcode = list(gcode)
+                self.gcode = gcode.splitlines(True)
                 self.running = True
             else:
                 print("already running")
