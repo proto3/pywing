@@ -5,23 +5,24 @@ import pyqtgraph as pg
 import pyqtgraph.opengl as gl
 import numpy as np
 import pickle
-import sys
+import sys, math
 
-from airfoil import *
 from machine import *
 from foamblock import *
 from position import *
 from cutparameters import *
 
+from pathmanager import PathManager, PathManagerWidget
+
 class CutProcessor(QtCore.QObject):
     update = QtCore.pyqtSignal()
 
-    def __init__(self, machine_model, l_path, r_path, abs_pos_model, rel_pos_model, foam_block_model, cut_param_model):
+    def __init__(self, machine_model, path_manager_l, path_manager_r, abs_pos_model, rel_pos_model, foam_block_model, cut_param_model):
         super().__init__()
         self._machine_model = machine_model
 
-        self.l_path_gen = self.rel_path_gen = l_path
-        self.r_path_gen = self.abs_path_gen = r_path
+        self.path_manager_l = self.rel_path_manager = path_manager_l
+        self.path_manager_r = self.abs_path_manager = path_manager_r
 
         self.abs_on_right = True
 
@@ -36,63 +37,65 @@ class CutProcessor(QtCore.QObject):
         self._apply_transform()
 
         self._path_l = self._path_r = np.array([[],[],[]])
-        self._synced_path_l = self._synced_path_r = np.array([[],[],[]])
         self._machine_path_l = self._machine_path_r = np.array([[],[],[]])
 
-        self.l_path_gen.update.connect(self._connect_paths)
-        self.r_path_gen.update.connect(self._connect_paths)
+        self.path_manager_l.gen_update.connect(self._generate_paths)
+        self.path_manager_r.gen_update.connect(self._generate_paths)
+        self.path_manager_l.sync_update.connect(self._connect_paths)
+        self.path_manager_r.sync_update.connect(self._connect_paths)
 
         self.abs_pos.update.connect(self._apply_transform)
         self.rel_pos.update.connect(self._apply_transform)
         self.cut_param.update.connect(self._apply_transform)
         self.foam_block.update.connect(self._connect_paths)
 
-    def _connect_paths(self):
+    def _generate_paths(self):
+        self.path_manager_l.generate()
+        self.path_manager_r.generate()
+
+        self._path_l = np.insert(self.path_manager_l.path.get_path(), 1, self.foam_block.offset + self.foam_block.width, axis=0)
+        self._path_r = np.insert(self.path_manager_r.path.get_path(), 1, self.foam_block.offset, axis=0)
+
         if self.is_synced():
-            degrees = list(set(self.l_path_gen.get_degree_list() + self.r_path_gen.get_degree_list()))
-            degrees.sort()
-
-            self._synced_path_l = np.insert(self.l_path_gen.get_interpolated_points(degrees), 1, self.foam_block.offset + self.foam_block.width, axis=0)
-            self._synced_path_r = np.insert(self.r_path_gen.get_interpolated_points(degrees), 1, self.foam_block.offset, axis=0)
-
             # gen machine path
             #TODO to be cleaned
             width = self._machine_model.get_width()
-            left = self._synced_path_l
-            right = self._synced_path_r
+            left = self._path_l
+            right = self._path_r
             self._machine_path_l = np.vstack(((left[0]-right[0])/(left[1]-right[1])*(width-left[1])+left[0], (left[2]-right[2])/(left[1]-right[1])*(width-left[1])+left[2]))
             self._machine_path_l = np.insert(self._machine_path_l, 1, width, axis=0)
             self._machine_path_r = np.vstack(((right[0]-left[0])/(right[1]-left[1])*(0.0-right[1])+right[0], (right[2]-left[2])/(right[1]-left[1])*(0.0-right[1])+right[2]))
             self._machine_path_r = np.insert(self._machine_path_r, 1, 0.0, axis=0)
 
-        self._path_l = np.insert(self.l_path_gen.get_path(), 1, self.foam_block.offset + self.foam_block.width, axis=0)
-        self._path_r = np.insert(self.r_path_gen.get_path(), 1, self.foam_block.offset, axis=0)
-
         self.update.emit()
+
+    def _connect_paths(self):
+        PathManager.synchronize(self.path_manager_l, self.path_manager_r)
+        self._generate_paths()
 
     def generate_gcode(self):
         gcode = list()
-        if(self.l_path_gen.loaded and self.r_path_gen.loaded):
+        if(self.path_manager_l.loaded and self.path_manager_r.loaded):
             prev_pos = (self._machine_path_r[0][0],
                         self._machine_path_r[2][0],
                         self._machine_path_l[0][0],
                         self._machine_path_l[2][0])
-            prev_pos_s = (self._synced_path_r[0][0],
-                          self._synced_path_r[2][0],
-                          self._synced_path_l[0][0],
-                          self._synced_path_l[2][0])
+            prev_pos_s = (self._path_r[0][0],
+                          self._path_r[2][0],
+                          self._path_l[0][0],
+                          self._path_l[2][0])
             gcode.append("G01 F%.3f X%.3f Y%.3f U%.3f V%.3f\n" % ((self.cut_param.feedrate,) + prev_pos))
 
 
-            for i in range(1, len(self._synced_path_r[0])):
+            for i in range(1, len(self._path_r[0])):
                 new_pos = (self._machine_path_r[0][i],
                            self._machine_path_r[2][i],
                            self._machine_path_l[0][i],
                            self._machine_path_l[2][i])
-                new_pos_s = (self._synced_path_r[0][i],
-                             self._synced_path_r[2][i],
-                             self._synced_path_l[0][i],
-                             self._synced_path_l[2][i])
+                new_pos_s = (self._path_r[0][i],
+                             self._path_r[2][i],
+                             self._path_l[0][i],
+                             self._path_l[2][i])
                 machine_diff = np.array(new_pos) - np.array(prev_pos)
                 synced_diff = np.array(new_pos_s) - np.array(prev_pos_s)
                 m_square = np.square(machine_diff)
@@ -105,20 +108,21 @@ class CutProcessor(QtCore.QObject):
                 gcode.append("G01 F%.3f X%.3f Y%.3f U%.3f V%.3f\n" % ((m_dist / s_dist * self.cut_param.feedrate,) + new_pos))
 
         program = str()
-        program += ";Left  airfoil: " + self.l_path_gen.name
-        program += (" | S: %.2f R: %.2f TX: %.2f TY: %.2f K: %.2f\n" %
-                (self.l_path_gen.s,
-                self.l_path_gen.r,
-                self.l_path_gen.t[0],
-                self.l_path_gen.t[1],
-                self.l_path_gen.k))
-        program += ";Right airfoil : " + self.r_path_gen.name
-        program += (" | S: %.2f R: %.2f TX: %.2f TY: %.2f K: %.2f\n" %
-                (self.r_path_gen.s,
-                self.r_path_gen.r,
-                self.r_path_gen.t[0],
-                self.r_path_gen.t[1],
-                self.r_path_gen.k))
+        #TODO
+        # program += ";Left  airfoil: " + self.path_manager_l.name
+        # program += (" | S: %.2f R: %.2f TX: %.2f TY: %.2f K: %.2f\n" %
+        #         (self.path_manager_l.s,
+        #         self.path_manager_l.r,
+        #         self.path_manager_l.t[0],
+        #         self.path_manager_l.t[1],
+        #         self.path_manager_l.k))
+        # program += ";Right airfoil : " + self.path_manager_r.name
+        # program += (" | S: %.2f R: %.2f TX: %.2f TY: %.2f K: %.2f\n" %
+        #         (self.path_manager_r.s,
+        #         self.path_manager_r.r,
+        #         self.path_manager_r.t[0],
+        #         self.path_manager_r.t[1],
+        #         self.path_manager_r.k))
 
         for command in gcode:
             program += command
@@ -126,23 +130,20 @@ class CutProcessor(QtCore.QObject):
         return program
 
     def is_synced(self):
-        return self.l_path_gen.loaded and self.r_path_gen.loaded
+        return self.path_manager_l.loaded and self.path_manager_r.loaded
 
     def get_path_colors(self):
-        return (self.l_path_gen.color, self.r_path_gen.color)
+        return (self.path_manager_l.color, self.path_manager_r.color)
 
     def get_paths(self):
         return (self._path_l, self._path_r)
-
-    def get_synced_paths(self):
-        return (self._synced_path_l, self._synced_path_r)
 
     def get_machine_paths(self):
         return (self._machine_path_l, self._machine_path_r)
 
     def get_synced_boundaries(self):
-        bounds_r = self.r_path_gen.get_boundaries()
-        bounds_l = self.l_path_gen.get_boundaries()
+        bounds_r = self.path_manager_r.get_boundaries()
+        bounds_l = self.path_manager_l.get_boundaries()
         return np.concatenate((np.minimum(bounds_r[:2], bounds_l[:2]), np.maximum(bounds_r[2:], bounds_l[2:])))
 
     def get_machine_boundaries(self):
@@ -153,39 +154,40 @@ class CutProcessor(QtCore.QObject):
         return np.concatenate((np.minimum(bounds_r[:2], bounds_l[:2]), np.maximum(bounds_r[2:], bounds_l[2:])))
 
     def _apply_transform(self):
-        self.abs_path_gen.set_lead_size(self.cut_param.lead)
-        self.rel_path_gen.set_lead_size(self.cut_param.lead)
+        #TODO better inhibate gen_update here to perform all that changes faster
+        self.abs_path_manager.set_lead_size(self.cut_param.lead)
+        self.rel_path_manager.set_lead_size(self.cut_param.lead)
 
-        self.abs_path_gen.rotate(self.abs_pos.r)
-        self.rel_path_gen.rotate(self.abs_pos.r + self.rel_pos.r)
+        self.abs_path_manager.rotate(self.abs_pos.r)
+        self.rel_path_manager.rotate(self.abs_pos.r + self.rel_pos.r)
 
-        self.abs_path_gen.translate_x(self.abs_pos.t[0])
-        self.abs_path_gen.translate_y(self.abs_pos.t[1])
+        self.abs_path_manager.translate_x(self.abs_pos.t[0])
+        self.abs_path_manager.translate_y(self.abs_pos.t[1])
         rrad = self.abs_pos.r / 180 * math.pi
         c = math.cos(rrad)
         s = math.sin(rrad)
         x = self.rel_pos.t[0] * c - self.rel_pos.t[1] * s
         y = self.rel_pos.t[0] * s + self.rel_pos.t[1] * c
-        self.rel_path_gen.translate_x(self.abs_pos.t[0] + x)
-        self.rel_path_gen.translate_y(self.abs_pos.t[1] + y)
+        self.rel_path_manager.translate_x(self.abs_pos.t[0] + x)
+        self.rel_path_manager.translate_y(self.abs_pos.t[1] + y)
 
     def is_abs_on_right(self):
         return self.abs_on_right
 
     def reverse(self):
         # exchange content of left and right paths
-        tmp = self.l_path_gen.export_tuple()
-        self.l_path_gen.import_tuple(self.r_path_gen.export_tuple())
-        self.r_path_gen.import_tuple(tmp)
+        tmp = self.path_manager_l.export_tuple()
+        self.path_manager_l.import_tuple(self.path_manager_r.export_tuple())
+        self.path_manager_r.import_tuple(tmp)
 
         # switch absolute side between left and right
         self.abs_on_right = not self.abs_on_right
         if self.abs_on_right:
-            self.rel_path_gen = self.l_path_gen
-            self.abs_path_gen = self.r_path_gen
+            self.rel_path_manager = self.path_manager_l
+            self.abs_path_manager = self.path_manager_r
         else:
-            self.abs_path_gen = self.l_path_gen
-            self.rel_path_gen = self.r_path_gen
+            self.abs_path_manager = self.path_manager_l
+            self.rel_path_manager = self.path_manager_r
 
         # apply relative and absolute position to paths
         self._apply_transform()
@@ -212,8 +214,8 @@ class CutProcessor(QtCore.QObject):
         pickle.dump(self.foam_block.export_tuple(), fp)
         pickle.dump(self.abs_pos.export_tuple(), fp)
         pickle.dump(self.rel_pos.export_tuple(), fp)
-        pickle.dump(self.l_path_gen.export_tuple(), fp)
-        pickle.dump(self.r_path_gen.export_tuple(), fp)
+        pickle.dump(self.path_manager_l.export_tuple(), fp)
+        pickle.dump(self.path_manager_r.export_tuple(), fp)
 
         fp.close()
 
@@ -225,17 +227,17 @@ class CutProcessor(QtCore.QObject):
         self.foam_block.import_tuple(pickle.load(fp))
         self.abs_pos.import_tuple(pickle.load(fp))
         self.rel_pos.import_tuple(pickle.load(fp))
-        self.l_path_gen.import_tuple(pickle.load(fp))
-        self.r_path_gen.import_tuple(pickle.load(fp))
+        self.path_manager_l.import_tuple(pickle.load(fp))
+        self.path_manager_r.import_tuple(pickle.load(fp))
 
         fp.close()
 
         if self.abs_on_right:
-            self.rel_path_gen = self.l_path_gen
-            self.abs_path_gen = self.r_path_gen
+            self.rel_path_manager = self.path_manager_l
+            self.abs_path_manager = self.path_manager_r
         else:
-            self.abs_path_gen = self.l_path_gen
-            self.rel_path_gen = self.r_path_gen
+            self.abs_path_manager = self.path_manager_l
+            self.rel_path_manager = self.path_manager_r
         self._apply_transform()
 
 class GraphicViewWidget(gl.GLViewWidget):
@@ -315,8 +317,7 @@ class GraphicViewWidget(gl.GLViewWidget):
         self._machine_path_item_l.setData(pos = machine_paths[0].transpose())
         self._machine_path_item_r.setData(pos = machine_paths[1].transpose())
 
-        synced_paths = self._cut_proc.get_synced_paths()
-        connection_lines = np.concatenate((synced_paths[0].transpose(), synced_paths[1].transpose()), axis=1).reshape(len(synced_paths[0][0])*2,3)
+        connection_lines = np.concatenate((paths[0].transpose(), paths[1].transpose()), axis=1).reshape(len(paths[0][0])*2,3)
         self.connection_lines_item.setData(pos=connection_lines)
 
 class CuttingProcessorWidget(QtGui.QWidget):
@@ -437,10 +438,12 @@ if __name__ == '__main__':
     rel_color = (46, 134, 171)
 
     machine = MachineModel()
-    airfoil_l = AirfoilGenerator(rel_color)
-    airfoil_r = AirfoilGenerator(abs_color)
-    airfoil_widget_l = AirfoilWidget(airfoil_l)
-    airfoil_widget_r = AirfoilWidget(airfoil_r)
+    # path_l = AirfoilGenerator(rel_color)
+    # path_r = AirfoilGenerator(abs_color)
+    path_manager_l = PathManager(rel_color)
+    path_manager_r = PathManager(abs_color)
+    path_widget_l = PathManagerWidget(path_manager_l)
+    path_widget_r = PathManagerWidget(path_manager_r)
 
     abs_pos_model = PositionModel('Absolute')
     abs_pos_widget = PositionWidget(abs_pos_model)
@@ -451,19 +454,19 @@ if __name__ == '__main__':
     cut_param_model = CutParametersModel()
     cut_param_widget = CutParametersWidget(cut_param_model)
 
-    cut_proc = CutProcessor(machine, airfoil_l, airfoil_r, abs_pos_model, rel_pos_model, foam_block_model, cut_param_model)
+    cut_proc = CutProcessor(machine, path_manager_l, path_manager_r, abs_pos_model, rel_pos_model, foam_block_model, cut_param_model)
 
     graphic_view_widget = GraphicViewWidget(cut_proc, machine)
     cutting_proc_widget = CuttingProcessorWidget(cut_proc, machine)
 
     top_widget = QtGui.QWidget()
     grid_layout = QtGui.QGridLayout()
-    grid_layout.addWidget(airfoil_widget_l,0,0)
+    grid_layout.addWidget(path_widget_l,0,0)
     grid_layout.addWidget(rel_pos_widget,1,0)
     grid_layout.addWidget(cut_param_widget,2,0)
     grid_layout.addWidget(graphic_view_widget,0,1,3,2)
     grid_layout.setColumnStretch(1, 1)
-    grid_layout.addWidget(airfoil_widget_r,0,3)
+    grid_layout.addWidget(path_widget_r,0,3)
     grid_layout.addWidget(abs_pos_widget,1,3)
     grid_layout.addWidget(foam_block_widget,2,3)
     top_widget.setLayout(grid_layout)

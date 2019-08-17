@@ -1,12 +1,12 @@
 #!/usr/bin/python3
-# -*- coding: utf-8 -*-
-from PyQt5 import QtCore
+# from PyQt5 import QtCore
 import numpy as np
 import math
 
-class PathGenerator(QtCore.QObject):
-    update = QtCore.pyqtSignal()
-    reset = QtCore.pyqtSignal()
+class Path():
+# class Path(QtCore.QObject):
+    # update = QtCore.pyqtSignal()
+    # reset = QtCore.pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -31,7 +31,7 @@ class PathGenerator(QtCore.QObject):
     def import_tuple(self, tuple):
         self.s, self.k, self.initial_path = tuple
         self._apply_transform()
-        self.reset.emit()
+        # self.reset.emit()
 
     def get_path(self):
         return self.final_path
@@ -88,7 +88,7 @@ class PathGenerator(QtCore.QObject):
         self.lead_out = self._lead_next(self.final_path[:,-2], self.final_path[:,-1])
         self.final_path = np.column_stack((self.lead_in, self.final_path, self.lead_out))
 
-        self.update.emit()
+        # self.update.emit()
 
     def _apply_kerf(self):
         tmp = self.initial_path

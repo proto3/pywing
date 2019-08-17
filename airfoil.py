@@ -2,17 +2,15 @@
 # -*- coding: utf-8 -*-
 from PyQt5 import QtCore, QtGui, Qt
 import numpy as np
-from path import *
 import os
+
+from pathgenerator import *
 
 airfoil_data_folder = QtCore.QDir.homePath() + "/.airfoils"
 
 class AirfoilGenerator(PathGenerator):
     def __init__(self, color):
-        super().__init__()
-        self.loaded = False
-        self.name = ''
-        self.color = color
+        super().__init__(color)
         self.s = 100.0
         self.leading_edge_idx = 0
 
