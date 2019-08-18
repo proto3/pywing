@@ -15,7 +15,7 @@ class PathItem(ABC):
         pass
 
     @abstractmethod
-    def split(self, degree):
+    def split(self, degrees):
         pass
 
     @abstractmethod
@@ -69,11 +69,15 @@ class Line(PathItem):
         else:
             return np.linspace(self.start, self.end, num=self.nb_points, axis=1)
 
-    def split(self, degree):
-        splitlen = self.start + (self.end - self.start) * degree
-        a = Line(self.start, splitlen)
-        b = Line(splitlen, self.end)
-        return (a, b)
+    def split(self, degrees):
+        prev_split = self.start
+        slices = []
+        for i in degrees:
+            split = self.start + (self.end - self.start) * i
+            slices.append(Line(prev_split, split))
+            prev_split = split
+        slices.append(Line(prev_split, self.end))
+        return slices
 
     def reverse(self):
         self.start, self.end = self.end, self.start
@@ -126,12 +130,16 @@ class Arc(PathItem):
         else:
             return np.column_stack((points, self.end))
 
-    def split(self, degree):
-        angle_from_start = (self.ccw * 2 - 1) * self.rad_len * degree
-        split_angle =  math.fmod(self.rad_start + angle_from_start + 2 * math.pi, 2 * math.pi)
-        a = Arc(self.center, self.radius, self.rad_start, split_angle, self.ccw)
-        b = Arc(self.center, self.radius, split_angle, self.rad_end, self.ccw)
-        return (a, b)
+    def split(self, degrees):
+        prev_split = self.rad_start
+        slices = []
+        for i in degrees:
+            angle_from_start = (self.ccw * 2 - 1) * self.rad_len * i
+            split = math.fmod(self.rad_start + angle_from_start + 2 * math.pi, 2 * math.pi)
+            slices.append(Arc(self.center, self.radius, prev_split, split, self.ccw))
+            prev_split = split
+        slices.append(Arc(self.center, self.radius, prev_split, self.rad_end, self.ccw))
+        return slices
 
     def reverse(self):
         self.start, self.end = self.end, self.start
@@ -141,7 +149,7 @@ class Arc(PathItem):
     def nb_points_hint(self):
         max_error = 1e-2
         max_angle = 2 * math.acos(1.0 - max_error / self.radius)
-        return math.ceil(self.rad_len / max_angle) + 1
+        return min(2, math.ceil(self.rad_len / max_angle) + 1)
 
 class PathGenerator():
     sync_points = list()
@@ -169,7 +177,10 @@ class PathGenerator():
             return sum([i.length() for i in self.items])
 
     def item_lengths(self):
-        return np.cumsum(np.array([i.length() for i in self.items]))
+        return np.array([i.length() for i in self.items])
+
+    def cumulated_lengths(self):
+        return np.cumsum(self.item_lengths())
 
     def generate(self, reverse = False):
         if len(self.items) == 1:
@@ -181,51 +192,64 @@ class PathGenerator():
                 path = np.column_stack((path[:,:-1], i.generate(reverse)))
             return path
 
-    def split(self, degree, inplace=False):
+    def slice(self, degrees):
+        if degrees.size == 0:
+            return
+
+        cumlen = self.cumulated_lengths()
+        deglen = degrees * cumlen[-1]
+
+        item_idx = []
+        current_item = 0
+        for i in deglen:
+            while i > cumlen[current_item]:
+                current_item += 1
+            item_idx.append(current_item)
+
+        item_deglen = [deglen[i] - (np.insert(cumlen, 0, 0.0))[item_idx[i]] for i in range(len(deglen))]
+
+        res = []
+        item_deg = []
+        prev_item = -1
+        itemlen = self.item_lengths()
+        for i in range(len(item_idx)):
+            if item_idx[i] > prev_item + 1:
+                res += self.items[prev_item+1 : item_idx[i]]
+            prev_item = item_idx[i]
+            item_deg.append(item_deglen[i] / itemlen[item_idx[i]])
+            if i+1 > len(item_idx)-1 or item_idx[i+1] > item_idx[i]:
+                res += self.items[item_idx[i]].split(item_deg)
+                item_deg = []
+        res += self.items[item_idx[-1]+1:]
+        self.items = res
+
+    def split(self, degree):
         degree = degree % 1.0
-
-        cumlen = self.item_lengths()
-        splitlen = degree * cumlen[-1]
-
-        if splitlen < epsilon:
-            return (PathGenerator(), self)
-        if splitlen > cumlen[-1] - epsilon:
-            return (self, PathGenerator())
-
         if len(self.items) == 1:
             a, b = self.items[0].split(degree)
-            if inplace:
-                self.items = [a, b]
-            else:
-                return (PathGenerator(a), PathGenerator(b))
+            return (PathGenerator(a), PathGenerator(b))
         else:
-            split_idx = np.argmax(splitlen < cumlen + epsilon)
-            if splitlen > cumlen[split_idx] - epsilon:
-                if inplace:
-                    pass
-                else:
-                    return (PathGenerator(copy.deepcopy(self.items[:split_idx+1])), PathGenerator(copy.deepcopy(self.items[split_idx+1:])))
-            else:
-                item_length = self.items[split_idx].length()
-                item_degree = (item_length + splitlen - cumlen[split_idx]) / item_length
-                a, b = self.items[split_idx].split(item_degree)
-                if inplace:
-                    self.items.pop(split_idx)
-                    self.items.insert(split_idx, b)
-                    self.items.insert(split_idx, a)
-                else:
-                    return (PathGenerator(copy.deepcopy(self.items[:split_idx]) + [a]), PathGenerator([b] + copy.deepcopy(self.items[split_idx+1:])))
+            cumlen = self.cumulated_lengths()
+            splitlen = degree * cumlen[-1]
+            split_idx = np.argmax(cumlen > splitlen)
+            item_length = self.items[split_idx].length()
+            item_degree = (item_length + splitlen - cumlen[split_idx]) / item_length
+            a, b = self.items[split_idx].split([item_degree])
+            return (PathGenerator(copy.deepcopy(self.items[:split_idx]) + [a]), PathGenerator([b] + copy.deepcopy(self.items[split_idx+1:])))
 
     def is_cyclic(self):
         return self.items and self.items[-1].is_followed_by(self.items[0])
 
     def rotate(self, degree):
         if self.is_cyclic():
+            len = self.length()
+            splitlen = degree * len
+            if splitlen < epsilon or splitlen > len - epsilon:
+                return self
             a,b = self.split(degree)
             return b + a
         else:
-            # return PathGenerator(copy.deepcopy(self.items))
-            return self # TODO not safe, because it's not a copy
+            return self.copy()
 
     def reverse(self):
         self.sync_points = (1.0 - np.flip(self.sync_points)).tolist()
@@ -245,71 +269,27 @@ class PathGenerator():
         self.items.append(item)
 
     def degrees(self):
-        lengths = np.insert(self.item_lengths(), 0, 0.0)
-        return lengths / lengths[-1]
+        cumlen = self.cumulated_lengths()
+        return np.insert(cumlen, 0, 0.0) / cumlen[-1]
 
     def synchronize(a, b):
-        if not a.items or not b.items:
-            return a, b # TODO not safe, because it's not a copy
+        a = a.copy()
+        b = b.copy()
+        if a.items and b.items:
+            a_deg = a.degrees()[1:-1]
+            b_deg = b.degrees()[1:-1]
+            a.slice(b_deg)
+            b.slice(a_deg)
+            for i in range(len(a.items)):
+                nb_points = max(a.items[i].nb_points_hint(), b.items[i].nb_points_hint())
+                a.items[i].set_nb_points(nb_points)
+                b.items[i].set_nb_points(nb_points)
+        return a, b
 
-        tmp = a.sync_points
-        a = PathGenerator(copy.deepcopy(a.items))
-        a.sync_points = tmp
-        tmp = b.sync_points
-        b = PathGenerator(copy.deepcopy(b.items))
-        b.sync_points = tmp
-
-        #cut a and b on sync points if no near point available
-        nb_sync_points = min(len(a.sync_points), len(b.sync_points))
-        for i in range(nb_sync_points):
-            a.split(a.sync_points[i], True)
-            b.split(b.sync_points[i], True)
-
-        #prepare list of sync interval for a
-        tmp = a.sync_points[:nb_sync_points]
-        a_sync_intervals = [list(x) for x in zip([0.0] + tmp, tmp + [1.0])]
-
-        #prepare list of sync interval for b
-        tmp = b.sync_points[:nb_sync_points]
-        b_sync_intervals = [list(x) for x in zip([0.0] + tmp, tmp + [1.0])]
-
-        #iterate through both interval lists
-        all_cut = []
-        for a_itv, b_itv in zip(a_sync_intervals, b_sync_intervals):
-            # take all a degree between length a_itv[0]+epsilon et a_itv[1]-epsilon
-            a_lengths = a.item_lengths()[:-1]
-            a_mask = (a_lengths >= a_itv[0] * a.length() + epsilon) & (a_lengths <= a_itv[1] * a.length() - epsilon)
-            a_deg = a.degrees()[1:-1][a_mask]
-
-            # take all b degree between length b_itv[0]+epsilon et b_itv[1]-epsilon
-            b_lengths = b.item_lengths()[:-1]
-            b_mask = (b_lengths >= b_itv[0] * b.length() + epsilon) & (b_lengths <= b_itv[1] * b.length() - epsilon)
-            b_deg = b.degrees()[1:-1][b_mask]
-
-            filtered = []
-            all_deg = np.sort(np.concatenate([a_deg, b_deg]))
-            while len(all_deg) >= 2:
-                if (all_deg[0] * a.length() <= all_deg[1] * a.length() - epsilon
-                and all_deg[0] * b.length() <= all_deg[1] * b.length() - epsilon):
-                    filtered.append(all_deg[0])
-                    all_deg = all_deg[1:]
-                else:
-                    all_deg = all_deg[2:]
-            if all_deg:
-                filtered.append(all_deg[0])
-
-            all_cut += filtered
-
-        for i in all_cut:
-            a.split(i, True)
-            b.split(i, True)
-
-        for i in range(len(a.items)):
-            nb_points = max(a.items[i].nb_points_hint(), b.items[i].nb_points_hint())
-            a.items[i].set_nb_points(nb_points)
-            b.items[i].set_nb_points(nb_points)
-
-        return (a, b)
+    def copy(self):
+        cp = PathGenerator(copy.deepcopy(self.items))
+        cp.sync_points = self.sync_points
+        return cp
 
     def __add__(self, other):
         if(not self.is_followed_by(other)):

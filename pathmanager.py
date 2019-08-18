@@ -5,6 +5,7 @@ import os, sys
 from pathgenerator import PathGenerator
 from path import Path
 from dxfloader import DXFLoader
+from airfoilloader import AirfoilLoader
 
 class PathManager(QtCore.QObject):
     gen_update = QtCore.pyqtSignal()
@@ -152,7 +153,7 @@ class PathManagerWidget(QtGui.QWidget):
         self.pm.reset.connect(self.update)
 
     def on_load(self):
-        filename, _ = QtGui.QFileDialog.getOpenFileName(self.load_btn.parent(), 'Open File', '~', 'Airfoil & DXF (*.dat *.cor *.dxf *.DXF);; All Files (*)')
+        filename, _ = QtGui.QFileDialog.getOpenFileName(self.load_btn.parent(), 'Open File', QtCore.QDir.homePath(), 'Airfoil & DXF (*.dat *.cor *.dxf *.DXF);; All Files (*)')
         if filename:
             self.pm.load(filename)
 

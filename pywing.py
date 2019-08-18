@@ -154,7 +154,9 @@ class CutProcessor(QtCore.QObject):
         return np.concatenate((np.minimum(bounds_r[:2], bounds_l[:2]), np.maximum(bounds_r[2:], bounds_l[2:])))
 
     def _apply_transform(self):
-        #TODO better inhibate gen_update here to perform all that changes faster
+        self.abs_path_manager.blockSignals(True)
+        self.rel_path_manager.blockSignals(True)
+
         self.abs_path_manager.set_lead_size(self.cut_param.lead)
         self.rel_path_manager.set_lead_size(self.cut_param.lead)
 
@@ -170,6 +172,11 @@ class CutProcessor(QtCore.QObject):
         y = self.rel_pos.t[0] * s + self.rel_pos.t[1] * c
         self.rel_path_manager.translate_x(self.abs_pos.t[0] + x)
         self.rel_path_manager.translate_y(self.abs_pos.t[1] + y)
+
+        self.abs_path_manager.blockSignals(False)
+        self.rel_path_manager.blockSignals(False)
+        self.abs_path_manager.gen_update.emit()
+        self.rel_path_manager.gen_update.emit()
 
     def is_abs_on_right(self):
         return self.abs_on_right
