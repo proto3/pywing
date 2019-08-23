@@ -88,19 +88,20 @@ class Path():
         self.lead_out = self._lead_next(self.final_path[:,-2], self.final_path[:,-1])
         self.final_path = np.column_stack((self.lead_in, self.final_path, self.lead_out))
 
-        # self.update.emit()
-
     def _apply_kerf(self):
-        tmp = self.initial_path
-        x, y = np.column_stack((2*tmp[:,0]-tmp[:,1], tmp, 2*tmp[:,-1]-tmp[:,-2]))
-
-        angle = np.arctan2(y[1:]-y[:-1], x[1:]-x[:-1])
-        diff = (angle[:-1] - angle[1:] + math.pi)%(2*math.pi)
-
+        ini = self.initial_path
+        dup_idx = np.argwhere(np.all(np.equal(ini[:,1:], ini[:,:-1]), axis=0)).flatten()
+        select = np.delete(ini, dup_idx, axis=1)
+        delta = select[:,1:] - select[:,:-1]
+        extended = np.column_stack((delta[:,0], delta, delta[:,-1]))
+        angle = np.arctan2(extended[1], extended[0])
+        mid_angle = angle[:-1] + np.mod(angle[1:] - angle[:-1] + math.pi, 2*math.pi) / 2
         radius = self.k / self.s
-        self.kerf_path = np.stack((
-            x[1:-1] - radius * np.cos(angle[1:] + math.pi + diff/2),
-            y[1:-1] - radius * np.sin(angle[1:] + math.pi + diff/2)))
+        offset = np.stack((np.cos(mid_angle), np.sin(mid_angle))) * radius
+        select += offset
+        for i in dup_idx:
+            select = np.insert(select, i, select[:,i-1], axis=1)
+        self.kerf_path = select
 
     def _lead_next(self, a, b):
         # return c in | a---b ---- c | where c is the lead entry
