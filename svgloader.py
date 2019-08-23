@@ -1,20 +1,34 @@
 #!/usr/bin/env python3
 import numpy as np
-import ezdxf, sys, os
+import svgpathtools, sys, os
 from pathgenerator import *
 
-class DXFLoader():
+class SVGLoader():
     def load(filename):
+        paths = svgpathtools.svg2paths(filename, convert_lines_to_paths=True, convert_polylines_to_paths=True, convert_polygons_to_paths=True, return_svg_attributes=False)
+        item_list = list()
+        for i in paths[0][0]:
+            # print(isinstance, i, svgpathtools.path.CubicBezier)
+            # if isinstance(i, svgpathtools.path.CubicBezier):
+            #     print("Cb",svgpathtools.real(i.point(0.0)),svgpathtools.imag(i.point(0.0)), svgpathtools.real(i.point(1.0)),svgpathtools.imag(i.point(1.0)))
+            # elif isinstance(i, svgpathtools.path.Line):
+            #     print("L",svgpathtools.real(i.point(0.0)),svgpathtools.imag(i.point(0.0)), svgpathtools.real(i.point(1.0)),svgpathtools.imag(i.point(1.0)))
+            item_list.append(Line((svgpathtools.real(i.point(0.0)),svgpathtools.imag(i.point(0.0))), (svgpathtools.real(i.point(1.0)),svgpathtools.imag(i.point(1.0)))))
+
+        gen = PathGenerator()
+        gen.items = item_list
+        return gen
+
         dwg = ezdxf.readfile(filename)
         msp = dwg.modelspace()
         item_list = list()
-        vertex = list()
+        ends = list()
         for line in msp.query('LINE'):
             item_list.append(Line(line.dxf.start, line.dxf.end))
-            vertex += [line.dxf.start, line.dxf.end]
+            ends += [line.dxf.start, line.dxf.end]
         for arc in msp.query('ARC'):
             item = Arc(arc.dxf.center, arc.dxf.radius, arc.dxf.start_angle * math.pi / 180, arc.dxf.end_angle * math.pi / 180, True)
-            vertex += [item.start, item.end]
+            ends += [item.start, item.end]
             item_list.append(item)
         for polyline in msp.query('LWPOLYLINE'):
             # (x, y, [start_width, [end_width, [bulge]]])
@@ -24,7 +38,7 @@ class DXFLoader():
             for p in points[1:]:
                 item_list.append(Line(prev_p[:2], p[:2]))
                 prev_p = p
-            vertex += [points[0][:2], points[-1][:2]]
+            ends += [points[0][:2], points[-1][:2]]
 
         if not item_list:
             raise Exception('Path is empty')
@@ -32,9 +46,9 @@ class DXFLoader():
             pass
         else:
             edge_list = np.empty((0,2), int)
-            for n in range(len(vertex)):
-                for m in range(n+1, len(vertex)):
-                    if(abs(vertex[n][0] - vertex[m][0]) < epsilon and abs(vertex[n][1] - vertex[m][1]) < epsilon):
+            for n in range(len(ends)):
+                for m in range(n+1, len(ends)):
+                    if(abs(ends[n][0] - ends[m][0]) < epsilon and abs(ends[n][1] - ends[m][1]) < epsilon):
                         edge_list = np.vstack((edge_list, np.array((n,m))))
 
             degree = np.bincount(edge_list.flatten()).max()

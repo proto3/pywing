@@ -103,12 +103,16 @@ class CutProcessor(QtCore.QObject):
                 m_dist = max(math.sqrt(m_square[0]+m_square[1]), math.sqrt(m_square[2]+m_square[3]))
                 s_dist = max(math.sqrt(s_square[0]+s_square[1]), math.sqrt(s_square[2]+s_square[3]))
 
+                #TODO do a real gcode post proc
+                if s_dist == 0.0:
+                    continue
+
                 prev_pos = new_pos
                 prev_pos_s = new_pos_s
                 gcode.append("G01 F%.3f X%.3f Y%.3f U%.3f V%.3f\n" % ((m_dist / s_dist * self.cut_param.feedrate,) + new_pos))
 
         program = str()
-        #TODO
+        #TODO repair
         # program += ";Left  airfoil: " + self.path_manager_l.name
         # program += (" | S: %.2f R: %.2f TX: %.2f TY: %.2f K: %.2f\n" %
         #         (self.path_manager_l.s,
@@ -445,8 +449,6 @@ if __name__ == '__main__':
     rel_color = (46, 134, 171)
 
     machine = MachineModel()
-    # path_l = AirfoilGenerator(rel_color)
-    # path_r = AirfoilGenerator(abs_color)
     path_manager_l = PathManager(rel_color)
     path_manager_r = PathManager(abs_color)
     path_widget_l = PathManagerWidget(path_manager_l)
