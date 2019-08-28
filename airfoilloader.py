@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 import numpy as np
 import sys, os
 from pathgenerator import *

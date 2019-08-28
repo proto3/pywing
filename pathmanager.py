@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 from PyQt5 import Qt, QtCore, QtGui
 import os, sys
 

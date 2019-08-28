@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 from PyQt5 import QtCore
 import time, queue
 import serial.tools.list_ports
