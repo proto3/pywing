@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 from abc import ABC, abstractmethod
 import numpy as np
 import math, copy
@@ -11,7 +10,7 @@ class PathItem(ABC):
         pass
 
     @abstractmethod
-    def generate(self, reverse=False):
+    def generate(self):
         pass
 
     @abstractmethod
@@ -61,11 +60,8 @@ class Line(PathItem):
     def length(self):
         return np.linalg.norm(self.start - self.end)
 
-    def generate(self, reverse=False):
-        if reverse:
-            return np.linspace(self.end, self.start, num=self.nb_points, axis=1)
-        else:
-            return np.linspace(self.start, self.end, num=self.nb_points, axis=1)
+    def generate(self):
+        return np.linspace(self.start, self.end, num=self.nb_points, axis=1)
 
     def get_point(self, degree):
         return self.start + (self.end - self.start) * degree
@@ -107,17 +103,13 @@ class Arc(PathItem):
     def length(self):
         return self.radius * self.rad_len
 
-    def generate(self, reverse=False):
+    def generate(self):
         slice = self.nb_points - 1
 
-        if reverse:
-            points = self.end
-            start_angle = self.rad_end
-        else:
-            points = self.start
-            start_angle = self.rad_start
+        points = self.start
+        start_angle = self.rad_start
 
-        if self.ccw != reverse:
+        if self.ccw:
             angle_increment = self.rad_len / slice
         else:
             angle_increment = - self.rad_len / slice
@@ -126,10 +118,7 @@ class Arc(PathItem):
             angle = start_angle + i * angle_increment
             points = np.column_stack((points, self.center + self.radius * np.array([math.cos(angle), math.sin(angle)])))
 
-        if reverse:
-            return np.column_stack((points, self.start))
-        else:
-            return np.column_stack((points, self.end))
+        return np.column_stack((points, self.end))
 
     def get_point(self, degree):
         angle_from_start = (self.ccw * 2 - 1) * self.rad_len * degree
@@ -187,14 +176,13 @@ class PathGenerator():
     def cumulated_lengths(self):
         return np.cumsum(self.item_lengths())
 
-    def generate(self, reverse = False):
+    def generate(self):
         if len(self.items) == 1:
-            return self.items[0].generate(reverse)
+            return self.items[0].generate()
         else:
             path = np.array([[],[]])
-            ordered_items = reversed(self.items) if reverse else self.items
-            for i in ordered_items:
-                path = np.column_stack((path[:,:-1], i.generate(reverse)))
+            for i in self.items:
+                path = np.column_stack((path[:,:-1], i.generate()))
             return path
 
     def slice(self, degrees):

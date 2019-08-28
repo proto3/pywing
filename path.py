@@ -2,10 +2,6 @@ import numpy as np
 import math
 
 class Path():
-# class Path(QtCore.QObject):
-    # update = QtCore.pyqtSignal()
-    # reset = QtCore.pyqtSignal()
-
     def __init__(self):
         super().__init__()
         self.initial_path = np.array([[],[]])
