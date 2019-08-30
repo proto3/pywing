@@ -150,6 +150,7 @@ class PathGenerator():
     def __init__(self, items=[]):
         self.sync_points = list()
         if isinstance(items, list) or isinstance(items, tuple):
+            items = [i for i in items if i.length() >= epsilon]
             for n in range(1, len(items)):
                 items[n].orient_after(items[n-1])
             self.items = list(items)

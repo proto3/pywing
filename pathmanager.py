@@ -154,7 +154,7 @@ class PathManagerWidget(QtGui.QWidget):
 
         self.sync_view = SyncViewWidget(self.pm, self.pm.color)
 
-        self.widgets = (self.name, self.load_btn, self.scale_spbox, self.kerf_spbox, self.shift_spbox, self.reverse_btn, self.sync_view)
+        self.widgets = (self.name, self.load_btn, self.scale_spbox, self.kerf_spbox, self.shift_spbox, self.reverse_btn)#, self.sync_view)
 
         layout = QtGui.QVBoxLayout()
         [layout.addWidget(w) for w in self.widgets]

@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-from PyQt5 import QtCore, QtGui
+from PyQt5 import QtCore, QtGui, QtOpenGL
 import pyqtgraph as pg
-import pyqtgraph.opengl as gl
 import numpy as np
 import pickle
 import sys, math
@@ -11,6 +10,7 @@ from machine import *
 from foamblock import *
 from position import *
 from cutparameters import *
+from graphicview import *
 
 from pathmanager import PathManager, PathManagerWidget
 
@@ -251,86 +251,6 @@ class CutProcessor(QtCore.QObject):
             self.rel_path_manager = self.path_manager_r
         self._apply_transform()
 
-class GraphicViewWidget(gl.GLViewWidget):
-
-    def __init__(self, cut_processor, machine):
-        super().__init__()
-        self._cut_proc = cut_processor
-        self._machine = machine
-
-        length, width, height = self._machine.get_dimensions()
-        # self.setBackgroundColor((210, 234, 239))
-        self.setCameraPosition(distance=width+length, azimuth=225)
-        self.pan(length/2, width/2, 0.0)
-
-        ## create three grids, add each to the view
-        right_plane  = gl.GLGridItem(QtGui.QVector3D(length, height, 0))
-        left_plane   = gl.GLGridItem(QtGui.QVector3D(length, height, 0))
-        bottom_plane = gl.GLGridItem(QtGui.QVector3D(length,  width, 0))
-        right_plane.rotate(90, 1, 0, 0)
-        left_plane.rotate(90, 1, 0, 0)
-        right_plane.translate( length/2,  width, height/2)
-        left_plane.translate(  length/2,      0, height/2)
-        bottom_plane.translate(length/2,width/2,        0)
-        right_plane.setSpacing(50, 50, 50)
-        left_plane.setSpacing(50, 50, 50)
-        bottom_plane.setSpacing(50, 50, 50)
-
-        color_l, color_r = self._cut_proc.get_path_colors()
-        l_color_fp = tuple(i/255 for i in color_l) + (1.0,)
-        r_color_fp = tuple(i/255 for i in color_r) + (1.0,)
-        self.path_item_l = gl.GLLinePlotItem(color=l_color_fp, width=3.0, antialias=True, mode='line_strip')
-        self.path_item_r = gl.GLLinePlotItem(color=r_color_fp, width=3.0, antialias=True, mode='line_strip')
-
-        self.connection_lines_item = gl.GLLinePlotItem(color=(0.3, 0.0, 0.7, 0.5), antialias=True, mode='lines')
-        self.machine_item = gl.GLLinePlotItem(color=(1.0, 0.0, 0.0, 1.0), antialias=True, mode='lines')
-
-        self._machine_path_item_r = gl.GLLinePlotItem(color=(0.8,0.0,0.2,1.0), width=2.0, antialias=True, mode='line_strip')
-        self._machine_path_item_l = gl.GLLinePlotItem(color=(0.8,0.0,0.2,1.0), width=2.0, antialias=True, mode='line_strip')
-
-        self._axis = gl.GLAxisItem(QtGui.QVector3D(50,50,50), glOptions='opaque')#size=None, antialias=True, glOptions='translucent')
-
-        self.addItem(self._axis)
-        self.addItem(right_plane)
-        self.addItem(left_plane)
-        self.addItem(bottom_plane)
-        self.addItem(self.connection_lines_item)
-        self.addItem(self.machine_item)
-        self.addItem(self._machine_path_item_r)
-        self.addItem(self._machine_path_item_l)
-
-        self._cut_proc.update.connect(self.draw_paths)
-        self._machine.properties_changed.connect(self.draw_paths)
-        self._machine.state_changed.connect(self.draw_machine_state)
-
-        self.addItem(self.path_item_l)
-        self.addItem(self.path_item_r)
-
-    def draw_machine_state(self):
-        mpos = self._machine.get_wire_position()
-        if(mpos is not None):
-            self.machine_item.setData(pos=np.array(((mpos[0], 0.0, mpos[1]), (mpos[2], self._machine.get_width(), mpos[3]))))
-        else:
-            self.machine_item.setData(pos=np.array())
-
-    def draw_paths(self):
-        paths = self._cut_proc.get_paths()
-        color_l, color_r = self._cut_proc.get_path_colors()
-        l_color_fp = tuple(i/255 for i in color_l) + (1.0,)
-        r_color_fp = tuple(i/255 for i in color_r) + (1.0,)
-        self.path_item_l.setData(pos=paths[0].transpose(), color=l_color_fp)
-        self.path_item_r.setData(pos=paths[1].transpose(), color=r_color_fp)
-
-        if(not self._cut_proc.is_synced()):
-            return
-
-        machine_paths = self._cut_proc.get_machine_paths()
-        self._machine_path_item_l.setData(pos = machine_paths[0].transpose())
-        self._machine_path_item_r.setData(pos = machine_paths[1].transpose())
-
-        connection_lines = np.concatenate((paths[0].transpose(), paths[1].transpose()), axis=1).reshape(len(paths[0][0])*2,3)
-        self.connection_lines_item.setData(pos=connection_lines)
-
 class CuttingProcessorWidget(QtGui.QWidget):
 
     def __init__(self, cut_processor, machine):
@@ -443,7 +363,7 @@ if __name__ == '__main__':
     pg.setConfigOption('background', 'w')
     pg.setConfigOption('foreground', 'k')
     pg.setConfigOption('antialias', True)
-    app = QtGui.QApplication([])
+    application = QtGui.QApplication([])
 
     abs_color = (233, 79, 55)
     rel_color = (46, 134, 171)
@@ -465,7 +385,9 @@ if __name__ == '__main__':
 
     cut_proc = CutProcessor(machine, path_manager_l, path_manager_r, abs_pos_model, rel_pos_model, foam_block_model, cut_param_model)
 
-    graphic_view_widget = GraphicViewWidget(cut_proc, machine)
+    gview = GraphicView(cut_proc, machine)
+    graphic_view_widget = gview.canvas.native
+
     cutting_proc_widget = CuttingProcessorWidget(cut_proc, machine)
 
     top_widget = QtGui.QWidget()
@@ -487,4 +409,4 @@ if __name__ == '__main__':
     main_widget.setLayout(layout)
     main_widget.show()
 
-    sys.exit(app.exec_())
+    sys.exit(application.exec_())

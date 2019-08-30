@@ -78,8 +78,21 @@ class Path():
         self.final_path = np.dot(self.tr_mat, np.insert(self.kerf_path, 2, 1.0, axis=0))[:-1]
 
         # append lead in and out to path
-        self.lead_in  = self._lead_next(self.final_path[:, 1], self.final_path[:, 0])
-        self.lead_out = self._lead_next(self.final_path[:,-2], self.final_path[:,-1])
+        i = 1
+        while True:
+            if i == np.size(self.final_path, 1):
+                raise Error('Path to short to compute lead direction')
+            a = self.final_path[:, i]
+            b = self.final_path[:, 0]
+            length = np.linalg.norm(b-a)
+            if length > 1e-3:
+                self.lead_in = b + (b-a) * self.l / length
+                break
+            else:
+                i+=1
+
+        self.lead_in = self._compute_lead(self.final_path)
+        self.lead_out = self._compute_lead(np.flip(self.final_path, axis=1))
         self.final_path = np.column_stack((self.lead_in, self.final_path, self.lead_out))
 
     def _apply_kerf(self):
@@ -97,6 +110,14 @@ class Path():
             select = np.insert(select, i, select[:,i-1], axis=1)
         self.kerf_path = select
 
-    def _lead_next(self, a, b):
-        # return c in | a---b ---- c | where c is the lead entry
-        return b + (b-a) * self.l / np.linalg.norm(b-a)
+    def _compute_lead(self, path):
+        i = 1
+        while i < np.size(path, 1):
+            a = path[:, i]
+            b = path[:, 0]
+            length = np.linalg.norm(b-a)
+            if length > 1e-3:
+                return b + (b-a) * self.l / length
+            else:
+                i+=1
+        raise Error('Path to short to compute lead direction')
