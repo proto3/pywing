@@ -97,7 +97,7 @@ class Path():
 
     def _apply_kerf(self):
         ini = self.initial_path
-        dup_idx = np.argwhere(np.all(np.equal(ini[:,1:], ini[:,:-1]), axis=0)).flatten()
+        dup_idx = np.argwhere(np.all(np.isclose(ini[:,1:], ini[:,:-1], atol=1e-3), axis=0)).flatten()
         select = np.delete(ini, dup_idx, axis=1)
         delta = select[:,1:] - select[:,:-1]
         extended = np.column_stack((delta[:,0], delta, delta[:,-1]))
@@ -107,7 +107,7 @@ class Path():
         offset = np.stack((np.cos(mid_angle), np.sin(mid_angle))) * radius
         select += offset
         for i in dup_idx:
-            select = np.insert(select, i, select[:,i-1], axis=1)
+            select = np.insert(select, i, select[:,i], axis=1)
         self.kerf_path = select
 
     def _compute_lead(self, path):
