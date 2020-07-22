@@ -1,6 +1,9 @@
 # Pywing
 
-![alt text](images/pywing.jpg)
+[![Documentation Status](https://readthedocs.org/projects/pywing/badge/?version=latest)](https://pywing.readthedocs.io/en/latest/?badge=latest)
+
+
+![alt text](docs/source/_static/images/pywing.jpg)
 
 Pywing is a all-in-one software for hot wire foam CNC cutting. It can generate G-Code for other softwares or directly communicate with a 4-axis(XYUV) Grbl through serial link (see https://github.com/proto3/grbl/tree/hotwire).
 
